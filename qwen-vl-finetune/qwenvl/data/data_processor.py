@@ -242,14 +242,20 @@ def preprocess_qwen_visual(
 
 
 class LazySupervisedDataset(Dataset):
-    """Dataset for supervised fine-tuning."""
+    """Dataset for supervised fine-tuning.
 
-    def __init__(self, processor, data_args):
+    Supports split-aware loading. When split == "validation", it will try to
+    read from each dataset config's optional "annotation_path_validation" and
+    skip datasets without that field.
+    """
+
+    def __init__(self, processor, data_args, split: str = "train"):
         super(LazySupervisedDataset, self).__init__()
 
         dataset = data_args.dataset_use.split(",")
         dataset_list = data_list(dataset)
         rank0_print(f"Loading datasets: {dataset_list}")
+        self.split = split
         self.video_max_total_pixels = getattr(
             data_args, "video_max_total_pixels", 1664 * 28 * 28
         )
@@ -269,11 +275,18 @@ class LazySupervisedDataset(Dataset):
         list_data_dict = []
 
         for data in dataset_list:
-            file_format = data["annotation_path"].split(".")[-1]
+            ann_key = "annotation_path" if self.split == "train" else "annotation_path_validation"
+            ann_path = data.get(ann_key)
+            if not ann_path:
+                if self.split != "train":
+                    rank0_print(f"Skip dataset without validation split: {data}")
+                continue
+
+            file_format = ann_path.split(".")[-1]
             if file_format == "jsonl":
-                annotations = read_jsonl(data["annotation_path"])
+                annotations = read_jsonl(ann_path)
             else:
-                annotations = json.load(open(data["annotation_path"], "r"))
+                annotations = json.load(open(ann_path, "r"))
             sampling_rate = data.get("sampling_rate", 1.0)
             if sampling_rate < 1.0:
                 annotations = random.sample(
@@ -290,9 +303,10 @@ class LazySupervisedDataset(Dataset):
                     ann["data_path"] = data["data_path"]
             list_data_dict += annotations
 
-        rank0_print(f"Total training samples: {len(list_data_dict)}")
+        rank0_print(f"Total {self.split} samples: {len(list_data_dict)}")
 
-        random.shuffle(list_data_dict)  # Randomly shuffle the data for training
+        if self.split == "train":
+            random.shuffle(list_data_dict)  # Randomly shuffle the data for training
 
         rank0_print("Formatting inputs...Skip in lazy mode")
         processor = update_processor_pixels(processor, data_args)
@@ -678,15 +692,19 @@ class FlattenedDataCollatorForSupervisedDataset(DataCollatorForSupervisedDataset
 
 def make_supervised_data_module(processor, data_args) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
-    train_dataset = LazySupervisedDataset(processor, data_args=data_args)
+    train_dataset = LazySupervisedDataset(processor, data_args=data_args, split="train")
+    # Try to build validation dataset if available; skip silently if empty
+    eval_dataset = LazySupervisedDataset(processor, data_args=data_args, split="validation")
+    if len(eval_dataset) == 0:
+        eval_dataset = None
     if data_args.data_flatten or data_args.data_packing:
         data_collator = FlattenedDataCollatorForSupervisedDataset(processor.tokenizer)
         return dict(
-            train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator
+            train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator
         )
     data_collator = DataCollatorForSupervisedDataset(processor.tokenizer)
     return dict(
-        train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator
+        train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator
     )
 
 

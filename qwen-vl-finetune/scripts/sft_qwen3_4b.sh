@@ -43,10 +43,14 @@ args="
     --gradient_accumulation_steps ${grad_accum_steps} \
     --max_pixels 50176 \
     --min_pixels 784 \
-    --eval_strategy "no" \
+    --evaluation_strategy "steps" \
+    --eval_steps 40 \
     --save_strategy "steps" \
-    --save_steps 1000 \
+    --save_steps 40 \
     --save_total_limit 1 \
+    --load_best_model_at_end True \
+    --metric_for_best_model "eval_loss" \
+    --greater_is_better False \
     --learning_rate ${lr} \
     --weight_decay 0 \
     --warmup_ratio 0.03 \
