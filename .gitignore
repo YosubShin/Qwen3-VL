@@ -1,0 +1,13 @@
+.ipynb_checkpoints
+.DS_Store
+.vscode
+.idea
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.mypy_cache
+__pycache__
+
+wandb
