@@ -21,7 +21,7 @@ grad_accum_steps=4
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=m2sv-sft-11k-7k-in-progress
+datasets=m2sv-sft-11k
 
 # Output configuration
 run_name="qwen3-vl-8b-instruct"
@@ -38,7 +38,7 @@ args="
     --tune_mm_llm True
     --bf16
     --output_dir ${output_dir}
-    --num_train_epochs 8
+    --num_train_epochs 4
     --per_device_train_batch_size ${batch_size}
     --per_device_eval_batch_size ${batch_size}
     --gradient_accumulation_steps ${grad_accum_steps}
@@ -50,6 +50,8 @@ args="
     --save_strategy steps
     --save_steps 40
     --save_total_limit 1
+    --early_stopping_patience 3
+    --early_stopping_threshold 0.0
     --load_best_model_at_end True
     --metric_for_best_model eval_loss
     --greater_is_better False

@@ -43,3 +43,15 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_r: int = field(default=64)
     lora_alpha: int = field(default=128)
     lora_dropout: float = field(default=0.0)
+
+    # Early stopping
+    early_stopping_patience: Optional[int] = field(
+        default=None,
+        metadata={"help": "Stop training if metric does not improve for this many evals."},
+    )
+    early_stopping_threshold: Optional[float] = field(
+        default=0.0,
+        metadata={
+            "help": "Minimum improvement to qualify as better; smaller changes are ignored."
+        },
+    )

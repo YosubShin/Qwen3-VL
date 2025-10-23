@@ -40,6 +40,7 @@ from qwenvl.train.argument import (
     TrainingArguments,
 )
 from transformers import AutoProcessor, Trainer
+from transformers import EarlyStoppingCallback
 
 local_rank = None
 
@@ -184,9 +185,27 @@ def train(attn_implementation="flash_attention_2"):
             model.model.print_trainable_parameters()
     
     data_module = make_supervised_data_module(processor, data_args=data_args)
+    callbacks = []
+    if training_args.load_best_model_at_end:
+        # Honor alias flags: allow either evaluation_strategy or eval_strategy
+        eval_strategy = getattr(training_args, "evaluation_strategy", None) or getattr(training_args, "eval_strategy", None)
+        if str(eval_strategy) == "no":
+            logging.warning("load_best_model_at_end is set but evaluation_strategy is 'no'. Overriding to 'steps'.")
+            training_args.evaluation_strategy = "steps"
+
+    if getattr(training_args, "early_stopping_patience", None):
+        callbacks.append(
+            EarlyStoppingCallback(
+                early_stopping_patience=training_args.early_stopping_patience,
+                early_stopping_threshold=getattr(training_args, "early_stopping_threshold", 0.0),
+            )
+        )
+
     trainer = Trainer(
         model=model, processing_class=tokenizer, args=training_args, **data_module
     )
+    for cb in callbacks:
+        trainer.add_callback(cb)
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
         logging.info("checkpoint found, resume training")
