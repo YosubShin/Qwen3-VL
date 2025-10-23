@@ -44,7 +44,6 @@ args="
     --gradient_accumulation_steps ${grad_accum_steps}
     --max_pixels 50176
     --min_pixels 784
-    --evaluation_strategy steps
     --eval_strategy steps
     --do_eval
     --eval_steps 40
