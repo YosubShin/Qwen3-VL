@@ -40,7 +40,7 @@ args="
     --output_dir ${output_dir}
     --num_train_epochs 8
     --per_device_train_batch_size ${batch_size}
-    --per_device_eval_batch_size $((batch_size*2))
+    --per_device_eval_batch_size ${batch_size}
     --gradient_accumulation_steps ${grad_accum_steps}
     --max_pixels 50176
     --min_pixels 784
