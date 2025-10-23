@@ -45,6 +45,8 @@ args="
     --max_pixels 50176
     --min_pixels 784
     --evaluation_strategy steps
+    --eval_strategy steps
+    --do_eval
     --eval_steps 40
     --save_strategy steps
     --save_steps 40
@@ -65,7 +67,6 @@ args="
     --report_to wandb"
 
 # Launch training
-echo "Resolved args: ${args}"
 torchrun --nproc_per_node=${NPROC_PER_NODE} \
          --master_addr=${MASTER_ADDR} \
          --master_port=${MASTER_PORT} \
