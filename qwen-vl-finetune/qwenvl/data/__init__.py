@@ -37,6 +37,13 @@ M2SV_SFT_11K_7K_IN_PROGRESS = {
     "data_path": "/home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/m2sv-sft-11k-7k-in-progress",
 }
 
+M2SV_SFT_11K = {
+    "annotation_path": "m2sv-sft-11k/annotations.json",
+    "annotation_path_validation": "m2sv-sft-11k/annotations-validation.json",
+    "data_path": "/home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/m2sv-sft-11k",
+}
+
+
 data_dict = {
     "cambrian_737k": CAMBRIAN_737K,
     "cambrian_737k_pack": CAMBRIAN_737K_PACK,
@@ -45,6 +52,7 @@ data_dict = {
     "videochatgpt": VIDEOCHATGPT,
     "sample_images": SAMPLE_IMAGES,
     "m2sv-sft-11k-7k-in-progress": M2SV_SFT_11K_7K_IN_PROGRESS,
+    "m2sv-sft-11k": M2SV_SFT_11K,
 }
 
 
