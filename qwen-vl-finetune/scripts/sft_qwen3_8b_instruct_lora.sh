@@ -13,7 +13,7 @@ deepspeed=./scripts/zero3.json
 llm=Qwen/Qwen3-VL-8B-Instruct  # Using HuggingFace model ID
 
 # Training hyperparameters
-lr=1e-5
+lr=1e-4
 batch_size=4
 grad_accum_steps=4
 
