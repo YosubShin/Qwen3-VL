@@ -20,7 +20,7 @@ grad_accum_steps=4
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=public_dataset1,public_dataset2
+datasets=m2sv-sft-11k-7k-in-progress
 
 # Output configuration
 run_name="qwen3vl"

@@ -26,12 +26,25 @@ VIDEOCHATGPT = {
     "data_path": "PATH_TO_VIDEOCHATGPT_DATA",
 }
 
+SAMPLE_IMAGES = {
+    "annotation_path": "/home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/demo/single_images.json",
+    "data_path": "/home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune",
+}
+
+M2SV_SFT_11K_7K_IN_PROGRESS = {
+    "annotation_path": "m2sv-sft-11k-7k-in-progress/annotations.json",
+    "annotation_path_validation": "m2sv-sft-11k-7k-in-progress/annotations-validation.json",
+    "data_path": "/home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/m2sv-sft-11k-7k-in-progress",
+}
+
 data_dict = {
     "cambrian_737k": CAMBRIAN_737K,
     "cambrian_737k_pack": CAMBRIAN_737K_PACK,
     "mp_doc": MP_DOC,
     "clevr_mc": CLEVR_MC,
     "videochatgpt": VIDEOCHATGPT,
+    "sample_images": SAMPLE_IMAGES,
+    "m2sv-sft-11k-7k-in-progress": M2SV_SFT_11K_7K_IN_PROGRESS,
 }
 
 
