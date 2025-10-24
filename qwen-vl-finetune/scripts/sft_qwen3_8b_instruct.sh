@@ -48,7 +48,6 @@ args="
     --eval_strategy steps
     --do_eval
     --eval_steps 40
-    --predict_with_generate False
     --prediction_loss_only True
     --eval_accumulation_steps 1
     --save_strategy steps
