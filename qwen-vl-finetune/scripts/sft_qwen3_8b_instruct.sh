@@ -16,6 +16,7 @@ llm=Qwen/Qwen3-VL-8B-Instruct  # Using HuggingFace model ID
 lr=1e-5
 batch_size=4
 grad_accum_steps=4
+eval_batch_size=4
 
 # Training entry point
 entry_file=qwenvl/train/train_qwen.py
@@ -40,13 +41,16 @@ args="
     --output_dir ${output_dir}
     --num_train_epochs 4
     --per_device_train_batch_size ${batch_size}
-    --per_device_eval_batch_size ${batch_size}
+    --per_device_eval_batch_size ${eval_batch_size}
     --gradient_accumulation_steps ${grad_accum_steps}
     --max_pixels 50176
     --min_pixels 784
     --eval_strategy steps
     --do_eval
     --eval_steps 40
+    --predict_with_generate False
+    --prediction_loss_only True
+    --eval_accumulation_steps 1
     --save_strategy steps
     --save_steps 40
     --save_total_limit 1
@@ -68,6 +72,7 @@ args="
     --report_to wandb"
 
 # Launch training
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
 torchrun --nproc_per_node=${NPROC_PER_NODE} \
          --master_addr=${MASTER_ADDR} \
          --master_port=${MASTER_PORT} \
