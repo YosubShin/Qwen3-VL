@@ -43,6 +43,12 @@ M2SV_SFT_11K = {
     "data_path": "/home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/m2sv-sft-11k",
 }
 
+M2SV_SFT_11k_FULL = {
+    "annotation_path": "m2sv-sft-11k-full/annotations.json",
+    "annotation_path_validation": "m2sv-sft-11k-full/annotations-validation.json",
+    "data_path": "/home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/m2sv-sft-11k-full",
+}
+
 
 data_dict = {
     "cambrian_737k": CAMBRIAN_737K,
@@ -53,6 +59,7 @@ data_dict = {
     "sample_images": SAMPLE_IMAGES,
     "m2sv-sft-11k-7k-in-progress": M2SV_SFT_11K_7K_IN_PROGRESS,
     "m2sv-sft-11k": M2SV_SFT_11K,
+    "m2sv-sft-11k-full": M2SV_SFT_11k_FULL,
 }
 
 

@@ -21,7 +21,7 @@ grad_accum_steps=4
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=m2sv-sft-11k
+datasets=m2sv-sft-11k-full
 
 # Output configuration
 run_name="qwen3-vl-8b-instruct"
