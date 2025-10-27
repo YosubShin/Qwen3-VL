@@ -11,3 +11,6 @@
 __pycache__
 
 wandb
+qwen-vl-finetune/output
+
+__MACOSX
