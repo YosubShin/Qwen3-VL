@@ -39,8 +39,9 @@ from qwenvl.train.argument import (
     DataArguments,
     TrainingArguments,
 )
-from transformers import AutoProcessor, Trainer
+from transformers import AutoProcessor, Trainer, TrainerCallback
 from transformers import EarlyStoppingCallback
+from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 
 local_rank = None
 
@@ -63,6 +64,22 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
         cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
         del state_dict
         trainer._save(output_dir, state_dict=cpu_state_dict)  # noqa
+
+
+class ProcessorSaverCallback(TrainerCallback):
+    """Ensure the processor assets (e.g. preprocessor_config.json) are checkpointed."""
+
+    def __init__(self, processor):
+        self.processor = processor
+
+    def on_save(self, args, state, control, **kwargs):
+        if not args.should_save:
+            return
+        checkpoint_dir = os.path.join(
+            args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}"
+        )
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        self.processor.save_pretrained(checkpoint_dir)
 
 
 def set_model(model_args, model):
@@ -206,6 +223,7 @@ def train(attn_implementation="flash_attention_2"):
     )
     for cb in callbacks:
         trainer.add_callback(cb)
+    trainer.add_callback(ProcessorSaverCallback(processor))
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
         logging.info("checkpoint found, resume training")
@@ -217,8 +235,9 @@ def train(attn_implementation="flash_attention_2"):
     model.config.use_cache = True
 
     safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
-    
-    processor.save_pretrained(training_args.output_dir)
+
+    if trainer.args.should_save:
+        processor.save_pretrained(training_args.output_dir)
 
 
 if __name__ == "__main__":
