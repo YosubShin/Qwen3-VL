@@ -10,13 +10,13 @@ NNODES=${WORLD_SIZE:-1}
 deepspeed=./scripts/zero3.json
 
 # Model configuration
-llm=Qwen/Qwen3-VL-8B-Instruct  # Using HuggingFace model ID
+llm=Qwen/Qwen3-VL-32B-Instruct  # Using HuggingFace model ID
 
 # Training hyperparameters
-lr=5e-6
-batch_size=${BATCH_SIZE}
-grad_accum_steps=$((16 / batch_size))
-eval_batch_size=${BATCH_SIZE}
+lr=1e-5
+batch_size=2
+grad_accum_steps=8
+eval_batch_size=2
 
 # Training entry point
 entry_file=qwenvl/train/train_qwen.py
@@ -25,8 +25,8 @@ entry_file=qwenvl/train/train_qwen.py
 datasets=m2sv-sft-11k
 
 # Output configuration
-run_name="qwen3-vl-8b-instruct"
-output_dir="${RESULTS_DIR}/qwen3-vl-8b-instruct"
+run_name="qwen3-vl-32b-instruct"
+output_dir="${RESULTS_DIR}/qwen3-vl-32b-instruct"
 
 # Training arguments
 args="
@@ -39,7 +39,7 @@ args="
     --tune_mm_llm True
     --bf16
     --output_dir ${output_dir}
-    --num_train_epochs 1
+    --num_train_epochs 4
     --per_device_train_batch_size ${batch_size}
     --per_device_eval_batch_size ${eval_batch_size}
     --gradient_accumulation_steps ${grad_accum_steps}
@@ -47,19 +47,19 @@ args="
     --min_pixels 784
     --eval_strategy steps
     --do_eval
-    --eval_steps 50
+    --eval_steps 125
     --prediction_loss_only True
     --eval_accumulation_steps 1
     --save_strategy steps
-    --save_steps 50
+    --save_steps 125
     --save_total_limit 1
-    --early_stopping_patience 1
+    --early_stopping_patience 3
     --early_stopping_threshold 0.0
     --load_best_model_at_end True
     --metric_for_best_model eval_loss
     --greater_is_better False
     --learning_rate ${lr}
-    --weight_decay 0.0
+    --weight_decay 0
     --warmup_ratio 0.03
     --max_grad_norm 1
     --lr_scheduler_type cosine

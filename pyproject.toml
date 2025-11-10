@@ -1,0 +1,52 @@
+[project]
+name = "qwen-vl-finetune"
+version = "0.1.0"
+description = "Finetune Qwen3-VL on M2SV-SFT-11k-full dataset."
+readme = "README.md"
+requires-python = ">=3.10"
+
+# Core dependencies shared by both Mac (CPU/MPS) and HPC (CUDA)
+dependencies = [
+    "pandas>=2.2.0",
+    "pillow>=10.3.0",
+    "huggingface_hub>=0.23.0",
+    "transformers==4.57.1",
+    "wandb",
+    "setuptools",
+]
+
+[project.optional-dependencies]
+# HPC group adds distributed / CUDA-related tools,
+# but leaves torch/torchvision/torchaudio to be installed manually
+hpc = [
+    "peft==0.17.1",
+    "deepspeed==0.17.1",
+    "torchcodec==0.2",
+    "triton",
+    "ninja",
+    "accelerate==1.7.0",
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "torchaudio==2.6.0",
+    "flash-attn==2.7.4.post1",
+]
+
+[tool.uv]
+package = false
+no-build-isolation-package = ["flash-attn"]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu124", extra = "hpc" },
+]
+torchvision = [
+  { index = "pytorch-cu124", extra = "hpc" },
+]
+torchaudio = [
+  { index = "pytorch-cu124", extra = "hpc" },
+]

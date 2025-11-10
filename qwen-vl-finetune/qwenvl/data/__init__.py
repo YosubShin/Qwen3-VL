@@ -2,9 +2,6 @@ import os
 import re
 from pathlib import Path
 
-CWD_REPO_ROOT = Path(__file__).resolve().parents[3]
-REPO_ROOT = Path(os.environ.get("REPO_DIR", str(CWD_REPO_ROOT))).resolve()
-
 # Define placeholders for dataset paths
 CAMBRIAN_737K = {
     "annotation_path": "PATH_TO_CAMBRIAN_737K_ANNOTATION",
@@ -42,16 +39,18 @@ M2SV_SFT_11K_7K_IN_PROGRESS = {
     "data_path": "/home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune/m2sv-sft-11k-7k-in-progress",
 }
 
+DATASET_ROOT = Path(os.environ.get("DATASET_ROOT", "/home/yosubs/koa_scratch/Qwen3-VL/qwen-vl-finetune"))
+
 M2SV_SFT_11K = {
-    "annotation_path": "m2sv-sft-11k/annotations.json",
-    "annotation_path_validation": "m2sv-sft-11k/annotations-validation.json",
-    "data_path": str(REPO_ROOT / "qwen-vl-finetune/m2sv-sft-11k"),
+    "annotation_path": str(DATASET_ROOT / "m2sv-sft-11k/annotations.json"),
+    "annotation_path_validation": str(DATASET_ROOT / "m2sv-sft-11k/annotations-validation.json"),
+    "data_path": str(DATASET_ROOT / "m2sv-sft-11k"),
 }
 
 M2SV_SFT_11k_FULL = {
-    "annotation_path": "m2sv-sft-11k-full/annotations.json",
-    "annotation_path_validation": "m2sv-sft-11k-full/annotations-validation.json",
-    "data_path": str(REPO_ROOT / "qwen-vl-finetune/m2sv-sft-11k-full"),
+    "annotation_path": str(DATASET_ROOT / "m2sv-sft-11k-full/annotations.json"),
+    "annotation_path_validation": str(DATASET_ROOT / "m2sv-sft-11k-full/annotations-validation.json"),
+    "data_path": str(DATASET_ROOT / "m2sv-sft-11k-full"),
 }
 
 
