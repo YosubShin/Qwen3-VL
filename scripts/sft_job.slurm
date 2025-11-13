@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=Qwen3-VL-8B-Instruct-SFT
 #SBATCH --partition=kill-shared
-#SBATCH --time=4:00:00
+#SBATCH --time=6:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
-#SBATCH --constraint="hopper|ampere"
+#SBATCH --constraint="hopper"
 #SBATCH --gres=gpu:1
 
 set -euo pipefail
@@ -87,9 +87,9 @@ if (( GPU_MEM < 50000 )); then
     echo "⚠️ GPU has <50GB VRAM — too small for Qwen3-VL-8B-Instruct SFT."
     exit 1
 elif (( GPU_MEM < 90000 )); then
-    BATCH_SIZE=2
-else
     BATCH_SIZE=4
+else
+    BATCH_SIZE=8
 fi
 
 export BATCH_SIZE
@@ -112,4 +112,4 @@ export RESULTS_DIR
 export WANDB_DIR="${RESULTS_DIR}"
 
 cd "${REPO_DIR}/qwen-vl-finetune"
-srun uv run bash scripts/sft_qwen3_8b_instruct.sh
+srun uv run bash scripts/sft_qwen3_4b_instruct.sh
