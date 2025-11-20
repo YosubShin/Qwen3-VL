@@ -31,32 +31,51 @@ def load_livexivtqa(data_file: str, limit: int | None = None) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def build_dump_image_fn(image_root: str | None):
-    """Return a dump_image-compatible callable for absolute or relative image paths."""
+def build_dump_image_fn(
+    image_root: str | None,
+    image_column: str,
+    image_source_type: str,
+    image_mime_type: str,
+):
+    """Return a dump_image-compatible callable for dataset rows."""
+
+    def _ensure_list(value):
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, (list, tuple)):
+            return [str(v) for v in value if isinstance(v, str)]
+        raise ValueError(f'Unsupported {image_column} type: {type(value)}')
+
+    def _resolve_path(value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError('Empty image path encountered.')
+        if cleaned.startswith(('http://', 'https://', 'file://')):
+            return cleaned
+        if cleaned.startswith('/'):
+            return cleaned
+        if image_root is None:
+            return cleaned
+        return os.path.join(image_root, cleaned)
+
+    def _resolve_base64(value: str) -> str:
+        cleaned = ''.join(value.strip().split())
+        if not cleaned:
+            raise ValueError('Empty base64 image string encountered.')
+        if cleaned.startswith('data:image'):
+            return cleaned
+        return f'data:{image_mime_type};base64,{cleaned}'
 
     def _dump_image(line):
-        raw_path = line['image_path']
-        if isinstance(raw_path, str):
-            paths = [raw_path]
-        elif isinstance(raw_path, (list, tuple)):
-            paths = list(raw_path)
-        else:
-            raise ValueError(f'Unsupported image_path type: {type(raw_path)}')
-
-        resolved = []
-        for path in paths:
-            if not isinstance(path, str) or not path.strip():
-                continue
-            cleaned = path.strip()
-            if cleaned.startswith('/') or cleaned.startswith('file://'):
-                resolved.append(cleaned)
-            elif image_root is not None:
-                resolved.append(os.path.join(image_root, cleaned))
-            else:
-                resolved.append(cleaned)
+        if image_column not in line:
+            raise KeyError(f'Column "{image_column}" missing from sample.')
+        raw_value = line[image_column]
+        entries = _ensure_list(raw_value)
+        resolver = _resolve_base64 if image_source_type == 'base64' else _resolve_path
+        resolved = [resolver(entry) for entry in entries if entry.strip()]
 
         if not resolved:
-            raise ValueError('No valid image paths found for sample.')
+            raise ValueError(f'No valid {image_column} values found for sample.')
 
         return resolved if len(resolved) > 1 else resolved[0]
 
@@ -76,8 +95,8 @@ def to_serializable(sample: pd.Series) -> Dict[str, Any]:
 
 def run_inference(args):
     data = load_livexivtqa(args.data_file, limit=args.limit)
-    if 'image_path' not in data.columns:
-        raise ValueError('Expected an "image_path" column in the dataset.')
+    if args.image_column not in data.columns:
+        raise ValueError(f'Expected an "{args.image_column}" column in the dataset.')
 
     os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
 
@@ -90,7 +109,14 @@ def run_inference(args):
         min_pixels=args.min_pixels,
         max_pixels=args.max_pixels,
     )
-    model.set_dump_image(build_dump_image_fn(args.image_root))
+    model.set_dump_image(
+        build_dump_image_fn(
+            image_root=args.image_root,
+            image_column=args.image_column,
+            image_source_type=args.image_source_type,
+            image_mime_type=args.image_mime_type,
+        )
+    )
 
     results: List[Dict[str, Any]] = []
     for idx in tqdm(range(len(data)), desc='Running LiveXivTQA inference'):
@@ -104,6 +130,9 @@ def run_inference(args):
             if embedding_tensor.ndim == 2 and embedding_tensor.size(0) == 1:
                 embedding_tensor = embedding_tensor[0]
             embedding = embedding_tensor.tolist()
+
+        if args.image_column in line_dict:
+            line_dict.pop(args.image_column, None)
 
         result = {
             'question_id': line_dict.get('index', idx),
@@ -130,6 +159,19 @@ def parse_args():
     parser.add_argument('--data-file', type=str, required=True, help='Path to LiveXivTQA TSV file')
     parser.add_argument('--output-file', type=str, required=True, help='Where to dump JSONL predictions')
     parser.add_argument('--image-root', type=str, default=None, help='Optional base dir for relative image paths')
+    parser.add_argument('--image-column', type=str, default='image_path', help='Which column contains image data')
+    parser.add_argument(
+        '--image-source-type',
+        choices=['path', 'base64'],
+        default='path',
+        help='How to interpret the image column',
+    )
+    parser.add_argument(
+        '--image-mime-type',
+        type=str,
+        default='image/jpeg',
+        help='MIME type to use when interpreting base64 image columns',
+    )
     parser.add_argument('--dataset-name', type=str, default='LiveXivTQA', help='Dataset name used for prompts/metadata')
     parser.add_argument('--limit', type=int, default=5, help='Number of samples to run (default: 5)')
     parser.add_argument('--flush-every', type=int, default=5, help='Dump partial results after this many samples')
