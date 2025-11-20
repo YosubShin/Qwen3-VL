@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=Qwen3-VL-8B-Instruct-SFT
+#SBATCH --job-name=qwen3-vl-finetune
 #SBATCH --partition=kill-shared
 #SBATCH --time=6:00:00
 #SBATCH --cpus-per-task=8
@@ -60,7 +60,7 @@ requested_procs=${NPROC_PER_NODE:-}
 requested_procs_num=${NPROC_PER_NODE:-0}
 if [[ -z "${requested_procs}" || "${requested_procs_num}" -gt "${available_gpus}" ]]; then
     if [[ -n "${requested_procs}" && "${available_gpus}" -gt 0 ]]; then
-        echo "[sft_qwen3_8b_instruct] Reducing NPROC_PER_NODE=${requested_procs} to match available GPUs (${available_gpus})." >&2
+        echo "Reducing NPROC_PER_NODE=${requested_procs} to match available GPUs (${available_gpus})." >&2
     fi
     if [[ "${available_gpus}" -lt 1 ]]; then
         available_gpus=1
@@ -84,7 +84,7 @@ DTYPE="bfloat16"
 
 # Adjust batch size and other configs based on VRAM capacity
 if (( GPU_MEM < 50000 )); then
-    echo "⚠️ GPU has <50GB VRAM — too small for Qwen3-VL-8B-Instruct SFT."
+    echo "⚠️ GPU has <50GB VRAM — too small"
     exit 1
 elif (( GPU_MEM < 90000 )); then
     BATCH_SIZE=4
@@ -112,4 +112,4 @@ export RESULTS_DIR
 export WANDB_DIR="${RESULTS_DIR}"
 
 cd "${REPO_DIR}/qwen-vl-finetune"
-srun uv run bash scripts/sft_qwen3_4b_instruct.sh
+srun uv run bash scripts/sft_qwen3_8b_instruct.sh

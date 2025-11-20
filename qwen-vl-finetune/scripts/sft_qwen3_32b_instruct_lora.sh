@@ -10,22 +10,23 @@ NNODES=${WORLD_SIZE:-1}
 deepspeed=./scripts/zero3.json
 
 # Model configuration
-llm=Qwen/Qwen3-VL-8B-Instruct  # Using HuggingFace model ID
+llm=Qwen/Qwen3-VL-32B-Instruct  # Using HuggingFace model ID
 
 # Training hyperparameters
 lr=2e-4
-batch_size=4
-grad_accum_steps=4
+batch_size=2
+grad_accum_steps=8
+eval_batch_size=2
 
 # Training entry point
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration (replace with public dataset names)
-datasets=m2sv-sft-11k-full
+datasets=m2sv-sft-11k
 
 # Output configuration
-run_name="qwen3-vl-8b-instruct-lora"
-output_dir=./output/qwen3-vl-8b-instruct-lora
+run_name="qwen3-vl-32b-instruct-lora"
+output_dir="${RESULTS_DIR}/qwen3-vl-32b-instruct-lora"
 
 # Training arguments
 args="
@@ -41,17 +42,19 @@ args="
     --output_dir ${output_dir}
     --num_train_epochs 4
     --per_device_train_batch_size ${batch_size}
-    --per_device_eval_batch_size ${batch_size}
+    --per_device_eval_batch_size ${eval_batch_size}
     --gradient_accumulation_steps ${grad_accum_steps}
     --max_pixels 50176
     --min_pixels 784
     --eval_strategy steps
     --do_eval
     --eval_steps 50
+    --prediction_loss_only True
+    --eval_accumulation_steps 1
     --save_strategy steps
     --save_steps 50
     --save_total_limit 1
-    --early_stopping_patience 1
+    --early_stopping_patience 3
     --early_stopping_threshold 0.0
     --load_best_model_at_end True
     --metric_for_best_model eval_loss
@@ -69,9 +72,8 @@ args="
     --report_to wandb"
 
 # Launch training
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
 torchrun --nproc_per_node=${NPROC_PER_NODE} \
          --master_addr=${MASTER_ADDR} \
          --master_port=${MASTER_PORT} \
          ${entry_file} ${args}
-
-
