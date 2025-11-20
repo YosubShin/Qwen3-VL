@@ -95,6 +95,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         self.fps = 2.0
         self.nframe = 64
         self.FRAME_FACTOR = 2
+        self.last_prompt_embedding: torch.Tensor | None = None
         rank, world_size = get_rank_and_world_size()
         assert model_path is not None
         self.model_path = model_path
@@ -193,12 +194,25 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         inputs = self.processor(text=text, images=images, videos=videos, padding=True, return_tensors='pt')
         inputs = inputs.to('cuda')
 
-        generated_ids = self.model.generate(
+        with torch.no_grad():
+            prompt_outputs = self.model(
+                **inputs,
+                output_hidden_states=True,
+                use_cache=False,
+                return_dict=True,
+            )
+        prompt_hidden = prompt_outputs.hidden_states[-1]
+        if prompt_hidden is not None:
+            self.last_prompt_embedding = prompt_hidden[:, -1, :].detach().cpu()
+        else:
+            self.last_prompt_embedding = None
+
+        generated_ids_tensor = self.model.generate(
             **inputs,
             **self.generate_kwargs,
         )
         generated_ids = [
-            output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, generated_ids)
+            output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, generated_ids_tensor)
         ]
         out = self.processor.tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False

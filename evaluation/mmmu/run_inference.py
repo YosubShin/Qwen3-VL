@@ -98,12 +98,18 @@ def run_inference(args):
         line_dict = to_serializable(row)
         messages = model.build_prompt(row, args.dataset_name)
         response = model.generate(messages)
+        embedding = None
+        if getattr(model, 'last_prompt_embedding', None) is not None:
+            embedding_tensor = model.last_prompt_embedding
+            if embedding_tensor.ndim == 2 and embedding_tensor.size(0) == 1:
+                embedding_tensor = embedding_tensor[0]
+            embedding = embedding_tensor.tolist()
 
         result = {
             'question_id': line_dict.get('index', idx),
             'annotation': line_dict,
             'task': args.dataset_name,
-            'result': {'gen': response},
+            'result': {'gen': response, 'embedding': embedding},
             'messages': messages,
         }
         results.append(result)
