@@ -1,6 +1,8 @@
 import argparse
 import json
 import os
+import csv
+import sys
 from typing import Any, Dict, List
 
 import numpy as np
@@ -17,8 +19,16 @@ def _clean_cell(value: Any) -> Any:
     return value
 
 
+def _set_csv_field_limit():
+    try:
+        csv.field_size_limit(sys.maxsize)
+    except OverflowError:
+        csv.field_size_limit((1 << 31) - 1)
+
+
 def load_livexivtqa(data_file: str, limit: int | None = None) -> pd.DataFrame:
     """Load the LiveXivTQA TSV and optionally limit rows."""
+    _set_csv_field_limit()
     df = pd.read_csv(data_file, sep='\t', engine='python')
     df.columns = [_clean_cell(col) for col in df.columns]
     for column in df.columns:
