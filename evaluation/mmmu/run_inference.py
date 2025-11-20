@@ -26,8 +26,8 @@ def _set_csv_field_limit():
         csv.field_size_limit((1 << 31) - 1)
 
 
-def load_livexivtqa(data_file: str, limit: int | None = None) -> pd.DataFrame:
-    """Load the LiveXivTQA TSV and optionally limit rows."""
+def load_tabular_dataset(data_file: str, limit: int | None = None) -> pd.DataFrame:
+    """Load a TSV dataset (optionally limited to the first `limit` rows)."""
     _set_csv_field_limit()
     df = pd.read_csv(data_file, sep='\t', engine='python')
     df.columns = [_clean_cell(col) for col in df.columns]
@@ -104,7 +104,7 @@ def to_serializable(sample: pd.Series) -> Dict[str, Any]:
 
 
 def run_inference(args):
-    data = load_livexivtqa(args.data_file, limit=args.limit)
+    data = load_tabular_dataset(args.data_file, limit=args.limit)
     if args.image_column not in data.columns:
         raise ValueError(f'Expected an "{args.image_column}" column in the dataset.')
 
@@ -129,7 +129,8 @@ def run_inference(args):
     )
 
     results: List[Dict[str, Any]] = []
-    for idx in tqdm(range(len(data)), desc='Running LiveXivTQA inference'):
+    progress_label = f'Running {args.dataset_name} inference'
+    for idx in tqdm(range(len(data)), desc=progress_label):
         row = data.iloc[idx]
         line_dict = to_serializable(row)
         messages = model.build_prompt(row, args.dataset_name)
@@ -164,9 +165,9 @@ def run_inference(args):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Run Qwen2.5-VL inference on LiveXivTQA.')
+    parser = argparse.ArgumentParser(description='Run Qwen2.5-VL inference on a TSV dataset.')
     parser.add_argument('--model-path', type=str, required=True, help='HF model path, e.g. Qwen/Qwen2.5-VL-7B-Instruct')
-    parser.add_argument('--data-file', type=str, required=True, help='Path to LiveXivTQA TSV file')
+    parser.add_argument('--data-file', type=str, required=True, help='Path to TSV file with samples')
     parser.add_argument('--output-file', type=str, required=True, help='Where to dump JSONL predictions')
     parser.add_argument('--image-root', type=str, default=None, help='Optional base dir for relative image paths')
     parser.add_argument('--image-column', type=str, default='image_path', help='Which column contains image data')
@@ -182,7 +183,7 @@ def parse_args():
         default='image/jpeg',
         help='MIME type to use when interpreting base64 image columns',
     )
-    parser.add_argument('--dataset-name', type=str, default='LiveXivTQA', help='Dataset name used for prompts/metadata')
+    parser.add_argument('--dataset-name', type=str, default='GenericDataset', help='Dataset name used for prompts/metadata')
     parser.add_argument('--limit', type=int, default=5, help='Number of samples to run (default: 5)')
     parser.add_argument('--flush-every', type=int, default=5, help='Dump partial results after this many samples')
     parser.add_argument('--temperature', type=float, default=0.01)
