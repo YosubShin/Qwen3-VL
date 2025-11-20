@@ -130,31 +130,47 @@ def run_inference(args):
 
     results: List[Dict[str, Any]] = []
     progress_label = f'Running {args.dataset_name} inference'
-    for idx in tqdm(range(len(data)), desc=progress_label):
-        row = data.iloc[idx]
-        line_dict = to_serializable(row)
-        messages = model.build_prompt(row, args.dataset_name)
-        response = model.generate(messages)
-        embedding = None
-        if getattr(model, 'last_prompt_embedding', None) is not None:
-            embedding_tensor = model.last_prompt_embedding
-            if embedding_tensor.ndim == 2 and embedding_tensor.size(0) == 1:
-                embedding_tensor = embedding_tensor[0]
-            embedding = embedding_tensor.tolist()
+    batch_size = max(1, args.batch_size)
+    total_samples = len(data)
 
-        if args.image_column in line_dict:
-            line_dict.pop(args.image_column, None)
+    for start_idx in tqdm(range(0, total_samples, batch_size), desc=progress_label):
+        end_idx = min(start_idx + batch_size, total_samples)
+        batch_rows = data.iloc[start_idx:end_idx]
+        messages_batch = []
+        for row_struct in batch_rows.itertuples(index=False):
+            row_series = pd.Series(row_struct._asdict())
+            messages_batch.append(model.build_prompt(row_series, args.dataset_name))
 
-        result = {
-            'question_id': line_dict.get('index', idx),
-            'annotation': line_dict,
-            'task': args.dataset_name,
-            'result': {'gen': response, 'embedding': embedding},
-            'messages': messages,
-        }
-        results.append(result)
+        responses: List[str | None] = []
+        embeddings: List[List[float] | None] = []
+        for messages in messages_batch:
+            response = model.generate(messages, skip_text=args.skip_generation)
+            responses.append(response)
+            embedding = None
+            if getattr(model, 'last_prompt_embedding', None) is not None:
+                embedding_tensor = model.last_prompt_embedding
+                if embedding_tensor.ndim == 2 and embedding_tensor.size(0) == 1:
+                    embedding_tensor = embedding_tensor[0]
+                embedding = embedding_tensor.tolist()
+            embeddings.append(embedding)
 
-        if args.flush_every > 0 and (idx + 1) % args.flush_every == 0:
+        for local_idx, row_struct in enumerate(batch_rows.itertuples(index=False)):
+            row_series = pd.Series(row_struct._asdict())
+            line_dict = to_serializable(row_series)
+            if args.image_column in line_dict:
+                line_dict.pop(args.image_column, None)
+
+            global_idx = start_idx + local_idx
+            result = {
+                'question_id': line_dict.get('index', global_idx),
+                'annotation': line_dict,
+                'task': args.dataset_name,
+                'result': {'gen': responses[local_idx], 'embedding': embeddings[local_idx]},
+                'messages': messages_batch[local_idx],
+            }
+            results.append(result)
+
+        if args.flush_every > 0 and len(results) % args.flush_every == 0:
             with open(args.output_file, 'w') as f:
                 for res in results:
                     f.write(json.dumps(res) + '\n')
@@ -184,8 +200,10 @@ def parse_args():
         help='MIME type to use when interpreting base64 image columns',
     )
     parser.add_argument('--dataset-name', type=str, default='GenericDataset', help='Dataset name used for prompts/metadata')
-    parser.add_argument('--limit', type=int, default=5, help='Number of samples to run (default: 5)')
+    parser.add_argument('--limit', type=int, default=None, help='Number of samples to run (default: all)')
+    parser.add_argument('--batch-size', type=int, default=1, help='Number of samples per inference batch')
     parser.add_argument('--flush-every', type=int, default=5, help='Dump partial results after this many samples')
+    parser.add_argument('--skip-generation', action='store_true', help='Only compute embeddings, skip answer generation')
     parser.add_argument('--temperature', type=float, default=0.01)
     parser.add_argument('--top-p', type=float, default=0.001)
     parser.add_argument('--top-k', type=int, default=1)

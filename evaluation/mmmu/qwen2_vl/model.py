@@ -174,7 +174,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             content.append(item)
         return content
 
-    def generate_inner(self, message, dataset=None):
+    def generate_inner(self, message, dataset=None, skip_text=False):
         try:
             from qwen_vl_utils import process_vision_info
         except Exception as err:
@@ -207,19 +207,21 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         else:
             self.last_prompt_embedding = None
 
-        generated_ids_tensor = self.model.generate(
-            **inputs,
-            **self.generate_kwargs,
-        )
-        generated_ids = [
-            output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, generated_ids_tensor)
-        ]
-        out = self.processor.tokenizer.batch_decode(
-            generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )
-        response = out[0]
+        response = None
+        if not skip_text:
+            generated_ids_tensor = self.model.generate(
+                **inputs,
+                **self.generate_kwargs,
+            )
+            generated_ids = [
+                output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, generated_ids_tensor)
+            ]
+            out = self.processor.tokenizer.batch_decode(
+                generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
+            )
+            response = out[0]
         
-        if self.post_process:
+        if not skip_text and self.post_process:
             resp = response.split('\\boxed{')[-1]
             lt = len(resp)
             counter, end = 1, None
