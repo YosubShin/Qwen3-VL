@@ -1,7 +1,7 @@
 [project]
 name = "qwen-vl-finetune"
 version = "0.1.0"
-description = "Finetune Qwen3-VL on M2SV-SFT-11k-full dataset."
+description = "Finetune Qwen3-VL"
 readme = "README.md"
 requires-python = ">=3.10"
 
@@ -13,18 +13,22 @@ dependencies = [
     "transformers==4.57.1",
     "wandb",
     "setuptools",
+    "tqdm",
+    "requests",
+    "validators",
+    "qwen-vl-utils",
+    "peft==0.17.1",
+    "ninja",
+    "accelerate==1.7.0",
 ]
 
 [project.optional-dependencies]
 # HPC group adds distributed / CUDA-related tools,
 # but leaves torch/torchvision/torchaudio to be installed manually
 hpc = [
-    "peft==0.17.1",
     "deepspeed==0.17.1",
     "torchcodec==0.2",
     "triton",
-    "ninja",
-    "accelerate==1.7.0",
     "torch==2.6.0",
     "torchvision==0.21.0",
     "torchaudio==2.6.0",
@@ -42,11 +46,11 @@ explicit = true
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu124", extra = "hpc" },
+  { index = "pytorch-cu124", extra = "hpc", marker = "sys_platform == 'linux'" },
 ]
 torchvision = [
-  { index = "pytorch-cu124", extra = "hpc" },
+  { index = "pytorch-cu124", extra = "hpc", marker = "sys_platform == 'linux'" },
 ]
 torchaudio = [
-  { index = "pytorch-cu124", extra = "hpc" },
+  { index = "pytorch-cu124", extra = "hpc", marker = "sys_platform == 'linux'" },
 ]

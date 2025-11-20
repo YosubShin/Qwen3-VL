@@ -1,10 +1,5 @@
 project: Qwen3-VL
 
-default_partition: kill-shared
-
-modules:
-  python: lang/Python/3.11.5-GCCcore-13.2.0
-
 env_watch:
   - scripts/setup_env.sh
   - requirements.txt
