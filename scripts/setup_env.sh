@@ -31,24 +31,10 @@ if [[ -z "${RUN_METADATA_DIR}" && -n "${KOA_ML_RESULTS_ROOT:-}" && -n "${SLURM_J
 fi
 
 # Load any configured modules (edit these if your project needs different toolchains)
-module purge >/dev/null 2>&1 || true
-module load lang/Python/3.11.5-GCCcore-13.2.0 >/dev/null 2>&1 || true
+# module purge >/dev/null 2>&1 || true
+# module load lang/Python/3.11.5-GCCcore-13.2.0 >/dev/null 2>&1 || true
 
-# Prefer user-provided CUDA toolchain, fall back to koa_scratch layout
-CUDA_HOME="${KOA_CUDA_HOME:-${HOME}/koa_scratch/cuda-12.4}"
-if [[ -d "${CUDA_HOME}" ]]; then
-  export CUDA_HOME
-  export CUDA_PATH="${CUDA_HOME}"
-  export PATH="${CUDA_HOME}/bin:${PATH}"
-  if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
-    export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
-  else
-    export LD_LIBRARY_PATH="${CUDA_HOME}/lib64"
-  fi
-  log "Configured CUDA toolchain from ${CUDA_HOME}"
-else
-  log "CUDA toolchain not found at ${CUDA_HOME}; continuing without overriding PATH"
-fi
+log "Using container-provided CUDA toolchain; no custom setup required"
 
 # Prefer python3, fall back to python
 python_bin="$(command -v python3 || command -v python)"
