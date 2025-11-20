@@ -103,6 +103,28 @@ def to_serializable(sample: pd.Series) -> Dict[str, Any]:
     return result
 
 
+def load_existing_results(path: str):
+    """Return (list of prior results, set of processed question IDs)."""
+    existing = []
+    processed_ids = set()
+    if not path or not os.path.exists(path):
+        return existing, processed_ids
+    with open(path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            existing.append(obj)
+            qid = obj.get('question_id')
+            if qid is not None:
+                processed_ids.add(qid)
+    return existing, processed_ids
+
+
 def run_inference(args):
     data = load_tabular_dataset(args.data_file, limit=args.limit)
     if args.image_column not in data.columns:
@@ -128,7 +150,15 @@ def run_inference(args):
         )
     )
 
-    results: List[Dict[str, Any]] = []
+    existing_results: List[Dict[str, Any]] = []
+    processed_questions = set()
+    if args.resume:
+        existing_results, processed_questions = load_existing_results(args.output_file)
+        if len(existing_results):
+            print(f"Resuming from {len(existing_results)} existing results (skipping {len(processed_questions)} samples).")
+
+    results: List[Dict[str, Any]] = existing_results.copy()
+    new_results_written = 0
     progress_label = f'Running {args.dataset_name} inference'
     batch_size = max(1, args.batch_size)
     total_samples = len(data)
@@ -161,6 +191,10 @@ def run_inference(args):
                 line_dict.pop(args.image_column, None)
 
             global_idx = start_idx + local_idx
+            question_id = line_dict.get('index', global_idx)
+            if args.resume and question_id in processed_questions:
+                continue
+
             result = {
                 'question_id': line_dict.get('index', global_idx),
                 'annotation': line_dict,
@@ -169,8 +203,9 @@ def run_inference(args):
                 'messages': messages_batch[local_idx],
             }
             results.append(result)
+            new_results_written += 1
 
-        if args.flush_every > 0 and len(results) % args.flush_every == 0:
+        if args.flush_every > 0 and new_results_written > 0 and new_results_written % args.flush_every == 0:
             with open(args.output_file, 'w') as f:
                 for res in results:
                     f.write(json.dumps(res) + '\n')
@@ -204,6 +239,7 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=1, help='Number of samples per inference batch')
     parser.add_argument('--flush-every', type=int, default=5, help='Dump partial results after this many samples')
     parser.add_argument('--skip-generation', action='store_true', help='Only compute embeddings, skip answer generation')
+    parser.add_argument('--resume', action='store_true', help='Resume from an existing JSONL output file')
     parser.add_argument('--temperature', type=float, default=0.01)
     parser.add_argument('--top-p', type=float, default=0.001)
     parser.add_argument('--top-k', type=int, default=1)
