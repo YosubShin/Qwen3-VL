@@ -112,6 +112,10 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             MODEL_CLS = Qwen2VLForConditionalGeneration
             self.processor = Qwen2VLProcessor.from_pretrained(model_path)
 
+        print(self.processor.tokenizer)
+        print("padding_side:", self.processor.tokenizer.padding_side)
+        print("pad_token_id:", self.processor.tokenizer.pad_token_id)
+
         gpu_mems = get_gpu_memory()
         max_gpu_mem = max(gpu_mems) if gpu_mems != [] else -1
         assert max_gpu_mem > 0
