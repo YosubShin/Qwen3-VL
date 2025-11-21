@@ -43,20 +43,48 @@ def _pil_to_resized_data_uri(image: Image.Image, max_side: int) -> str:
     return f'data:image/png;base64,{encoded}'
 
 
+def _open_image_from_bytes(raw_bytes: bytes) -> Image.Image:
+    with Image.open(io.BytesIO(raw_bytes)) as img:
+        return img.copy()
+
+
 def _ensure_pil_image(value: Any) -> Image.Image:
     """Return a PIL image instance from dataset-provided image payload."""
+    def _maybe_decode_bytes(candidate: Any) -> bytes | None:
+        if candidate is None:
+            return None
+        if isinstance(candidate, (bytes, bytearray)):
+            return bytes(candidate)
+        if isinstance(candidate, str):
+            stripped = candidate.strip()
+            if not stripped:
+                return None
+            if stripped.startswith('data:image') and ',' in stripped:
+                _, encoded = stripped.split(',', 1)
+            else:
+                encoded = stripped
+            try:
+                return base64.b64decode(encoded, validate=False)
+            except Exception:
+                return None
+        return None
+
     if isinstance(value, Image.Image):
         return value.copy()
     if isinstance(value, dict):
-        if 'path' in value and os.path.exists(value['path']):
-            with Image.open(value['path']) as img:
+        path = value.get('path')
+        if isinstance(path, str) and path and os.path.exists(path):
+            with Image.open(path) as img:
                 return img.copy()
-        if 'bytes' in value:
-            with Image.open(io.BytesIO(value['bytes'])) as img:
-                return img.copy()
-    if isinstance(value, (bytes, bytearray)):
-        with Image.open(io.BytesIO(value)) as img:
+        raw_bytes = _maybe_decode_bytes(value.get('bytes'))
+        if raw_bytes:
+            return _open_image_from_bytes(raw_bytes)
+    if isinstance(value, str) and os.path.exists(value):
+        with Image.open(value) as img:
             return img.copy()
+    raw_value = _maybe_decode_bytes(value)
+    if raw_value:
+        return _open_image_from_bytes(raw_value)
     raise TypeError(f'Unsupported image payload type: {type(value)}')
 
 
