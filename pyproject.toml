@@ -3,7 +3,7 @@ name = "qwen-vl-finetune"
 version = "0.1.0"
 description = "Finetune Qwen3-VL"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<=3.12"
 
 # Core dependencies shared by both Mac (CPU/MPS) and HPC (CUDA)
 dependencies = [
