@@ -20,6 +20,7 @@ dependencies = [
     "peft==0.17.1",
     "ninja",
     "accelerate==1.7.0",
+    "datasets",
 ]
 
 [project.optional-dependencies]

@@ -29,6 +29,37 @@ def _set_csv_field_limit():
         csv.field_size_limit((1 << 31) - 1)
 
 
+def _pil_to_resized_data_uri(image: Image.Image, max_side: int) -> str:
+    """Resize PIL image if needed and return a PNG data URI."""
+    if image is None:
+        raise ValueError('Missing image value in dataset sample.')
+    rgb_image = image.convert('RGB')
+    width, height = rgb_image.size
+    if max_side > 0 and max(width, height) > max_side:
+        rgb_image.thumbnail((max_side, max_side), Image.LANCZOS)
+    buffer = io.BytesIO()
+    rgb_image.save(buffer, format='PNG')
+    encoded = base64.b64encode(buffer.getvalue()).decode('utf-8')
+    return f'data:image/png;base64,{encoded}'
+
+
+def _ensure_pil_image(value: Any) -> Image.Image:
+    """Return a PIL image instance from dataset-provided image payload."""
+    if isinstance(value, Image.Image):
+        return value.copy()
+    if isinstance(value, dict):
+        if 'path' in value and os.path.exists(value['path']):
+            with Image.open(value['path']) as img:
+                return img.copy()
+        if 'bytes' in value:
+            with Image.open(io.BytesIO(value['bytes'])) as img:
+                return img.copy()
+    if isinstance(value, (bytes, bytearray)):
+        with Image.open(io.BytesIO(value)) as img:
+            return img.copy()
+    raise TypeError(f'Unsupported image payload type: {type(value)}')
+
+
 def load_tabular_dataset(data_file: str, limit: int | None = None) -> pd.DataFrame:
     """Load a TSV dataset (optionally limited to the first `limit` rows)."""
     _set_csv_field_limit()
@@ -42,6 +73,46 @@ def load_tabular_dataset(data_file: str, limit: int | None = None) -> pd.DataFra
     if limit is not None:
         df = df.head(limit)
     return df.reset_index(drop=True)
+
+
+def load_hf_dataset(
+    dataset_name: str,
+    dataset_config: str | None,
+    split: str,
+    limit: int | None,
+    max_image_side: int,
+) -> pd.DataFrame:
+    """Load a Hugging Face dataset that provides image/problem/solution fields."""
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        raise ImportError('Please install the "datasets" package to use --hf-dataset-name.') from exc
+
+    load_kwargs: Dict[str, Any] = {}
+    if dataset_config:
+        load_kwargs['name'] = dataset_config
+    dataset = load_dataset(dataset_name, split=split, **load_kwargs)
+    if limit is not None:
+        limit = min(limit, len(dataset))
+        dataset = dataset.select(range(limit))
+
+    max_side = max(0, max_image_side)
+    rows: List[Dict[str, Any]] = []
+    for idx, sample in enumerate(dataset):
+        pil_image = _ensure_pil_image(sample.get('image'))
+        image_data_uri = _pil_to_resized_data_uri(pil_image, max_side)
+        problem = sample.get('problem')
+        solution = sample.get('solution')
+        rows.append(
+            {
+                'index': sample.get('index', idx),
+                'question': problem,
+                'problem': problem,
+                'solution': solution,
+                'image': image_data_uri,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def build_dump_image_fn(
@@ -192,9 +263,25 @@ def load_existing_results(path: str):
 
 
 def run_inference(args):
-    data = load_tabular_dataset(args.data_file, limit=args.limit)
-    if args.image_column not in data.columns:
-        raise ValueError(f'Expected an "{args.image_column}" column in the dataset.')
+    if args.hf_dataset_name:
+        data = load_hf_dataset(
+            dataset_name=args.hf_dataset_name,
+            dataset_config=args.hf_dataset_config,
+            split=args.hf_split,
+            limit=args.limit,
+            max_image_side=args.max_image_side,
+        )
+        image_column = 'image'
+        image_source_type = 'base64'
+    else:
+        if not args.data_file:
+            raise ValueError('Either --data-file or --hf-dataset-name must be provided.')
+        data = load_tabular_dataset(args.data_file, limit=args.limit)
+        image_column = args.image_column
+        image_source_type = args.image_source_type
+
+    if image_column not in data.columns:
+        raise ValueError(f'Expected an "{image_column}" column in the dataset.')
 
     os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
 
@@ -210,8 +297,8 @@ def run_inference(args):
     model.set_dump_image(
         build_dump_image_fn(
             image_root=args.image_root,
-            image_column=args.image_column,
-            image_source_type=args.image_source_type,
+            image_column=image_column,
+            image_source_type=image_source_type,
             image_mime_type=args.image_mime_type,
             max_image_side=args.max_image_side,
         )
@@ -247,8 +334,8 @@ def run_inference(args):
         for local_idx, row_struct in enumerate(batch_rows.itertuples(index=False)):
             row_series = pd.Series(row_struct._asdict())
             line_dict = to_serializable(row_series)
-            if args.image_column in line_dict:
-                line_dict.pop(args.image_column, None)
+            if image_column in line_dict:
+                line_dict.pop(image_column, None)
 
             global_idx = start_idx + local_idx
             question_id = line_dict.get('index', global_idx)
@@ -278,7 +365,10 @@ def run_inference(args):
 def parse_args():
     parser = argparse.ArgumentParser(description='Run Qwen2.5-VL inference on a TSV dataset.')
     parser.add_argument('--model-path', type=str, required=True, help='HF model path, e.g. Qwen/Qwen2.5-VL-7B-Instruct')
-    parser.add_argument('--data-file', type=str, required=True, help='Path to TSV file with samples')
+    parser.add_argument('--data-file', type=str, default=None, help='Path to TSV file with samples')
+    parser.add_argument('--hf-dataset-name', type=str, default=None, help='Hugging Face dataset to load instead of --data-file')
+    parser.add_argument('--hf-dataset-config', type=str, default=None, help='Optional dataset config/name for Hugging Face dataset')
+    parser.add_argument('--hf-split', type=str, default='train', help='Split to use for the Hugging Face dataset')
     parser.add_argument('--output-file', type=str, required=True, help='Where to dump JSONL predictions')
     parser.add_argument('--image-root', type=str, default=None, help='Optional base dir for relative image paths')
     parser.add_argument('--image-column', type=str, default='image_path', help='Which column contains image data')
