@@ -14,11 +14,13 @@ from .util import get_rank_and_world_size, get_gpu_memory, auto_split_flag, list
 
 
 def ensure_image_url(image: str) -> str:
-    prefixes = ['http://', 'https://', 'file://', 'data:image;']
+    prefixes = ['http://', 'https://', 'file://', 'data:image', 'data:application', 'data:']
     if any(image.startswith(prefix) for prefix in prefixes):
         return image
     if os.path.exists(image):
         return 'file://' + image
+    if len(image) > 50 and all(ch.isalnum() or ch in '+/=\n\r' for ch in image.strip()):
+        return f'data:image/jpeg;base64,{image.strip()}'
     raise ValueError(f'Invalid image: {image}')
 
 
