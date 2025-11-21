@@ -174,21 +174,25 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             content.append(item)
         return content
 
-    def generate_inner(self, message, dataset=None, skip_text=False):
+    def _build_conversation(self, message, dataset=None):
+        convo = []
+        if self.system_prompt is not None:
+            convo.append({'role': 'system', 'content': self.system_prompt})
+        convo.append({'role': 'user', 'content': self._prepare_content(message, dataset=dataset)})
+        return convo
+
+    def _run_batch(self, message_batch, dataset=None, skip_text=False):
         try:
             from qwen_vl_utils import process_vision_info
         except Exception as err:
             logging.critical("qwen_vl_utils not found, please install it via 'pip install qwen-vl-utils'")
             raise err
 
-        messages = []
-        if self.system_prompt is not None:
-            messages.append({'role': 'system', 'content': self.system_prompt})
-        messages.append({'role': 'user', 'content': self._prepare_content(message, dataset=dataset)})
+        conversations = [self._build_conversation(msg, dataset) for msg in message_batch]
         if self.verbose:
-            print(f'\033[31m{messages}\033[0m')
-        text = self.processor.apply_chat_template([messages], tokenize=False, add_generation_prompt=True)
-        images, videos = process_vision_info([messages])
+            print(f'\033[31m{conversations}\033[0m')
+        text = self.processor.apply_chat_template(conversations, tokenize=False, add_generation_prompt=True)
+        images, videos = process_vision_info(conversations)
         inputs = self.processor(text=text, images=images, videos=videos, padding=True, return_tensors='pt')
         inputs = inputs.to('cuda')
 
@@ -200,12 +204,11 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                 return_dict=True,
             )
         prompt_hidden = prompt_outputs.hidden_states[-1]
+        embeddings_tensor = None
         if prompt_hidden is not None:
-            self.last_prompt_embedding = prompt_hidden[:, -1, :].detach().cpu()
-        else:
-            self.last_prompt_embedding = None
+            embeddings_tensor = prompt_hidden[:, -1, :].detach().cpu()
 
-        response = None
+        responses = None
         if not skip_text:
             generated_ids_tensor = self.model.generate(
                 **inputs,
@@ -214,29 +217,50 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             generated_ids = [
                 output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, generated_ids_tensor)
             ]
-            out = self.processor.tokenizer.batch_decode(
+            responses = self.processor.tokenizer.batch_decode(
                 generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
             )
-            response = out[0]
-        
-        if not skip_text and self.post_process:
-            resp = response.split('\\boxed{')[-1]
-            lt = len(resp)
-            counter, end = 1, None
-            for i in range(lt):
-                if resp[i] == '{':
-                    counter += 1
-                elif resp[i] == '}':
-                    counter -= 1
-                if counter == 0:
-                    end = i
-                    break
-                elif i == lt - 1:
-                    end = lt
-                    break
-            if end is not None:
-                response = resp[:end]
+            if self.post_process:
+                processed = []
+                for resp in responses:
+                    val = resp
+                    seg = resp.split('\\boxed{')[-1]
+                    lt = len(seg)
+                    counter, end = 1, None
+                    for i in range(lt):
+                        if seg[i] == '{':
+                            counter += 1
+                        elif seg[i] == '}':
+                            counter -= 1
+                        if counter == 0:
+                            end = i
+                            break
+                        elif i == lt - 1:
+                            end = lt
+                            break
+                    if end is not None:
+                        val = seg[:end]
+                    processed.append(val)
+                responses = processed
 
-        if self.verbose:
+        return responses, embeddings_tensor
+
+    def generate_batch(self, message_batch, dataset=None, skip_text=False):
+        responses, embeddings_tensor = self._run_batch(message_batch, dataset=dataset, skip_text=skip_text)
+        batch_size = len(message_batch)
+        if responses is None:
+            responses = [None] * batch_size
+        if embeddings_tensor is not None:
+            embedding_list = [embeddings_tensor[i].tolist() for i in range(embeddings_tensor.size(0))]
+            self.last_prompt_embedding = embeddings_tensor[-1]
+        else:
+            embedding_list = [None] * batch_size
+            self.last_prompt_embedding = None
+        return responses, embedding_list
+
+    def generate_inner(self, message, dataset=None, skip_text=False):
+        responses, _ = self.generate_batch([message], dataset=dataset, skip_text=skip_text)
+        response = responses[0]
+        if self.verbose and response is not None:
             print(f'\033[32m{response}\033[0m')
         return response

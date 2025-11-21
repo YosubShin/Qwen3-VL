@@ -171,18 +171,11 @@ def run_inference(args):
             row_series = pd.Series(row_struct._asdict())
             messages_batch.append(model.build_prompt(row_series, args.dataset_name))
 
-        responses: List[str | None] = []
-        embeddings: List[List[float] | None] = []
-        for messages in messages_batch:
-            response = model.generate(messages, skip_text=args.skip_generation)
-            responses.append(response)
-            embedding = None
-            if getattr(model, 'last_prompt_embedding', None) is not None:
-                embedding_tensor = model.last_prompt_embedding
-                if embedding_tensor.ndim == 2 and embedding_tensor.size(0) == 1:
-                    embedding_tensor = embedding_tensor[0]
-                embedding = embedding_tensor.tolist()
-            embeddings.append(embedding)
+        responses, embeddings = model.generate_batch(
+            messages_batch,
+            dataset=args.dataset_name,
+            skip_text=args.skip_generation,
+        )
 
         for local_idx, row_struct in enumerate(batch_rows.itertuples(index=False)):
             row_series = pd.Series(row_struct._asdict())
