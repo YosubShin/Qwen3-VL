@@ -17,6 +17,8 @@ from sklearn.cluster import AgglomerativeClustering, DBSCAN, KMeans
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
+from evaluation.mmmu.run_inference import _ensure_pil_image, _pil_to_resized_data_uri
+
 try:
     import umap
 except ImportError:  # pragma: no cover - optional dependency
@@ -91,6 +93,45 @@ def load_tsv_from_upload(upload) -> pd.DataFrame | None:
     except Exception:
         pass
     return pd.read_csv(upload, sep='\t')
+
+
+@st.cache_data(show_spinner=False)
+def load_hf_image_lookup(
+    dataset_name: str,
+    dataset_config: str | None,
+    split: str,
+    limit: int | None,
+    index_column: str,
+    image_column: str,
+    max_image_side: int,
+) -> dict[str, dict]:
+    """Fetch images directly from a Hugging Face dataset."""
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise ImportError('Install the "datasets" package to fetch HF images.') from exc
+
+    load_kwargs = {}
+    if dataset_config:
+        load_kwargs['name'] = dataset_config
+    dataset = load_dataset(dataset_name, split=split, **load_kwargs)
+    if limit:
+        bounded = min(limit, len(dataset))
+        dataset = dataset.select(range(bounded))
+
+    lookup: dict[str, dict] = {}
+    for idx, sample in enumerate(dataset):
+        key = sample.get(index_column, idx)
+        image_value = sample.get(image_column)
+        if key is None or image_value is None:
+            continue
+        try:
+            pil_image = _ensure_pil_image(image_value)
+            data_uri = _pil_to_resized_data_uri(pil_image, max(0, max_image_side))
+        except Exception:
+            continue
+        lookup[str(key)] = {'image': data_uri}
+    return lookup
 
 
 def build_tsv_index_map(df: pd.DataFrame, key_col: str = 'index') -> dict[str, dict]:
@@ -178,6 +219,22 @@ def to_cluster_name(label: int) -> str:
     return f'Cluster {label}'
 
 
+def compute_knn_indices(embeddings: np.ndarray, query_index: int, k: int) -> tuple[np.ndarray, np.ndarray]:
+    """Return indices (and distances) of the k closest neighbors to the query embedding."""
+    total = embeddings.shape[0]
+    if total <= 1:
+        return np.empty(0, dtype=int), np.empty(0, dtype=float)
+    if query_index < 0 or query_index >= total:
+        raise IndexError('query_index out of bounds for embeddings matrix.')
+    k = max(1, min(int(k), total - 1))
+    query_vector = embeddings[query_index]
+    distances = np.linalg.norm(embeddings - query_vector, axis=1)
+    order = np.argsort(distances)
+    order = order[order != query_index]
+    neighbors = order[:k]
+    return neighbors, distances[neighbors]
+
+
 # ---------------------------------------------------------------------------
 # Image helpers
 # ---------------------------------------------------------------------------
@@ -258,10 +315,18 @@ def display_sample_card(
     image_col: str | None,
     image_root: str | None,
     tsv_lookup: dict[str, dict] | None,
+    hf_lookup: dict[str, dict] | None,
     base64_mime: str,
 ):
     st.markdown(f"**Question ID:** `{row.get('question_id')}` — **Cluster:** {row.get('cluster_name')}")
-    record = tsv_lookup.get(str(row.get('question_id'))) if tsv_lookup and pd.notna(row.get('question_id')) else None
+    record = None
+    question_id = row.get('question_id')
+    if pd.notna(question_id):
+        key = str(question_id)
+        if tsv_lookup:
+            record = tsv_lookup.get(key)
+        if record is None and hf_lookup:
+            record = hf_lookup.get(key)
     image_source = get_row_image_source(row, image_col, image_root, record, base64_mime) if (image_col or record) else None
     if image_source:
         try:
@@ -300,6 +365,7 @@ st.write(
 
 base64_df: pd.DataFrame | None = None
 base64_mime = 'image/png'
+hf_lookup: dict[str, dict] | None = None
 
 with st.sidebar:
     st.header('Data')
@@ -347,6 +413,53 @@ with st.sidebar:
         except Exception as exc:
             base64_df = None
             st.error(f'Failed to read TSV: {exc}')
+
+    with st.expander('Fetch images from Hugging Face dataset', expanded=False):
+        enable_hf_images = st.checkbox('Enable HF image lookup', value=False, key='enable_hf_images')
+        if enable_hf_images:
+            hf_dataset_name = st.text_input('HF dataset name', value='', key='hf_dataset_name')
+            hf_dataset_config = st.text_input('HF dataset config (optional)', value='', key='hf_dataset_config')
+            hf_split = st.text_input('HF split', value='train', key='hf_dataset_split')
+            hf_image_column = st.text_input('HF image column', value='image', key='hf_image_column')
+            hf_index_column = st.text_input('HF index column', value='index', key='hf_index_column')
+            hf_limit = st.number_input(
+                'Rows to fetch (0 = all)',
+                min_value=0,
+                max_value=100000,
+                value=int(load_limit),
+                step=100,
+                key='hf_limit',
+            )
+            hf_max_side = st.number_input(
+                'Max image side (px)',
+                min_value=64,
+                max_value=4096,
+                value=768,
+                step=64,
+                key='hf_max_side',
+            )
+            dataset_name_clean = hf_dataset_name.strip()
+            if dataset_name_clean:
+                hf_limit_value = None if int(hf_limit) == 0 else int(hf_limit)
+                try:
+                    hf_lookup = load_hf_image_lookup(
+                        dataset_name=dataset_name_clean,
+                        dataset_config=hf_dataset_config.strip() or None,
+                        split=hf_split.strip() or 'train',
+                        limit=hf_limit_value,
+                        index_column=hf_index_column.strip() or 'index',
+                        image_column=hf_image_column.strip() or 'image',
+                        max_image_side=int(hf_max_side),
+                    )
+                    st.caption(f'Loaded {len(hf_lookup)} HF samples with images.')
+                except ImportError as exc:
+                    hf_lookup = None
+                    st.error(str(exc))
+                except Exception as exc:
+                    hf_lookup = None
+                    st.error(f'Failed to load HF dataset: {exc}')
+            else:
+                st.info('Provide an HF dataset name to enable image lookup.')
 
 # Determine data source ------------------------------------------------------
 
@@ -432,6 +545,81 @@ with st.container():
     fig.update_traces(marker=dict(size=9, line=dict(width=0)))
     st.plotly_chart(fig, use_container_width=True)
 
+st.subheader('k-NN Explorer')
+if len(working_df) <= 1:
+    st.info('Need at least two samples to compute nearest neighbors.')
+else:
+    option_labels: list[str] = []
+    option_to_index: dict[str, int] = {}
+    for idx in range(len(working_df)):
+        row = working_df.iloc[idx]
+        qid = row.get('question_id')
+        qid_label = str(qid) if pd.notna(qid) else f'row-{idx}'
+        cluster_label = row.get('cluster_name') or 'Unassigned'
+        label = f'#{idx} — ID {qid_label} ({cluster_label})'
+        option_labels.append(label)
+        option_to_index[label] = idx
+    selected_label = st.selectbox('Reference sample', option_labels, index=0)
+    max_neighbors = min(len(working_df) - 1, 30)
+    k_value = st.slider('Number of neighbors (k)', min_value=1, max_value=max_neighbors, value=min(5, max_neighbors))
+    query_idx = option_to_index[selected_label]
+    neighbor_indices, neighbor_distances = compute_knn_indices(scaled_embeddings, query_idx, k_value)
+
+    knn_roles = np.array(['Other'] * len(working_df), dtype=object)
+    knn_roles[neighbor_indices] = 'Neighbor'
+    knn_roles[query_idx] = 'Query'
+
+    knn_plot_df = working_df[['proj_x', 'proj_y', 'cluster_name', 'question_id']].copy()
+    knn_plot_df.rename(columns={'proj_x': 'x', 'proj_y': 'y'}, inplace=True)
+    knn_plot_df['role'] = knn_roles
+    fig_knn = px.scatter(
+        knn_plot_df,
+        x='x',
+        y='y',
+        color='role',
+        symbol='role',
+        hover_data=['question_id', 'cluster_name'],
+        title='Nearest neighbors within the projection',
+    )
+    fig_knn.update_traces(marker=dict(size=10, line=dict(width=0)))
+    st.plotly_chart(fig_knn, use_container_width=True)
+
+    neighbor_df = working_df.iloc[neighbor_indices].copy()
+    neighbor_df.insert(0, 'distance', neighbor_distances.round(4))
+    neighbor_table = neighbor_df[['distance', 'question_id', 'cluster_name']]
+    st.caption('Distances are computed in standardized embedding space.')
+    st.dataframe(
+        neighbor_table.rename(columns={'distance': 'Distance', 'question_id': 'Question ID', 'cluster_name': 'Cluster'}),
+        use_container_width=True,
+    )
+
+    with st.expander('Preview reference sample and neighbors', expanded=False):
+        st.markdown('**Reference sample**')
+        display_sample_card(
+            working_df.iloc[query_idx],
+            question_col,
+            answer_col,
+            image_col,
+            image_root if image_root else None,
+            tsv_lookup,
+            hf_lookup,
+            base64_mime,
+        )
+        preview_count = min(3, len(neighbor_df))
+        if preview_count:
+            st.markdown(f'**Top {preview_count} neighbors**')
+            for _, neighbor_row in neighbor_df.head(preview_count).iterrows():
+                display_sample_card(
+                    neighbor_row,
+                    question_col,
+                    answer_col,
+                    image_col,
+                    image_root if image_root else None,
+                    tsv_lookup,
+                    hf_lookup,
+                    base64_mime,
+                )
+
 st.subheader('Samples')
 cluster_filter = st.multiselect('Filter clusters', sorted(set(cluster_names)), default=sorted(set(cluster_names)))
 filtered_df = working_df if not cluster_filter else working_df[working_df['cluster_name'].isin(cluster_filter)]
@@ -448,5 +636,6 @@ for _, sample_row in filtered_df.head(max_cards).iterrows():
             image_col,
             image_root if image_root else None,
             tsv_lookup,
+            hf_lookup,
             base64_mime,
         )

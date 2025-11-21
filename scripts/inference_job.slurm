@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=qwen-inference
-#SBATCH --time=00:15:00
+#SBATCH --time=01:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=60G
 #SBATCH --gres=gpu:1
@@ -105,23 +105,40 @@ echo
 export REPO_DIR
 export RESULTS_DIR
 
-if [[ "${KOA_BACKEND:-}" == "koa" ]]; then
-  export DATA_FILE="${LIVE_XIV_TQA_FILE:-/home/yosubs/LMUData/LiveXiv_TQA_v4_local.tsv}"
-  export IMAGE_ROOT="${LIVE_XIV_IMAGE_ROOT:-/home/yosubs/LMUData/images/LiveXiv_TQA_v4}"
-else
-  export DATA_FILE="${LIVE_XIV_TQA_FILE:-/work/hdd/bchy/shin1/LMUData/LiveXiv_TQA_v4_local.tsv}"
-  export IMAGE_ROOT="${LIVE_XIV_IMAGE_ROOT:-/work/hdd/bchy/shin1/LMUData/images/LiveXiv_TQA_v4}"
-fi
 export MODEL_PATH="${QWEN_VL_MODEL_PATH:-Qwen/Qwen2.5-VL-7B-Instruct}"
-export OUTPUT_FILE="${RESULTS_DIR}/livexivtqa_predictions.jsonl"
-export SAMPLE_LIMIT="${LIVE_XIV_SAMPLE_LIMIT:-8}"
+export OUTPUT_FILE="${RESULTS_DIR}/predictions.jsonl"
+export SAMPLE_LIMIT="${SAMPLE_LIMIT:-10000}"
+export HF_DATASET_NAME="${HF_DATASET_NAME:-oumi-ai/multimodal-open-r1-8192-filtered-mid-ic}"
+export DATA_FILE="${DATA_FILE:-}"
+export IMAGE_ROOT="${IMAGE_ROOT:-}"
+export BATCH_SIZE="${BATCH_SIZE:-16}"
+export SKIP_GENERATION="${SKIP_GENERATION:-1}"
+export RESUME_RUN="${RESUME_RUN:-1}"
 
-echo "==== LiveXivTQA Inference Settings ===="
-echo "Data file: ${DATA_FILE}"
-echo "Image root: ${IMAGE_ROOT}"
+echo "==== Inference Parameters ===="
 echo "Model path: ${MODEL_PATH}"
+if [[ -n "${HF_DATASET_NAME}" ]]; then
+  echo "HF dataset: ${HF_DATASET_NAME}"
+fi
+if [[ -n "${DATA_FILE}" ]]; then
+  echo "Data file: ${DATA_FILE}"
+fi
+if [[ -n "${IMAGE_ROOT}" ]]; then
+  echo "Image root: ${IMAGE_ROOT}"
+fi
 echo "Output file: ${OUTPUT_FILE}"
 echo "Sample limit: ${SAMPLE_LIMIT}"
+echo "Batch size: ${BATCH_SIZE}"
+if [[ "${SKIP_GENERATION}" == "1" ]]; then
+  echo "Skip generation: yes"
+else
+  echo "Skip generation: no"
+fi
+if [[ "${RESUME_RUN}" == "1" ]]; then
+  echo "Resume run: yes"
+else
+  echo "Resume run: no"
+fi
 echo
 
 CONTAINER_IMAGE="${CONTAINER_IMAGE:-docker://nvcr.io/nvidia/cuda:12.4.1-devel-ubuntu22.04}"
@@ -132,9 +149,14 @@ fi
 if [[ -z "${KOA_REMOTE_ROOT:-}" || ! -d "${KOA_REMOTE_ROOT}" ]]; then
   CONTAINER_BINDS+=("${JOB_DIR}:${JOB_DIR}")
 fi
-DATA_ROOT="$(dirname "${DATA_FILE}")"
-if [[ -n "${DATA_ROOT}" && -d "${DATA_ROOT}" ]]; then
-  CONTAINER_BINDS+=("${DATA_ROOT}:${DATA_ROOT}")
+if [[ -n "${DATA_FILE}" ]]; then
+  DATA_ROOT="$(dirname "${DATA_FILE}")"
+  if [[ -n "${DATA_ROOT}" && -d "${DATA_ROOT}" ]]; then
+    CONTAINER_BINDS+=("${DATA_ROOT}:${DATA_ROOT}")
+  fi
+fi
+if [[ -n "${IMAGE_ROOT}" && -d "${IMAGE_ROOT}" ]]; then
+  CONTAINER_BINDS+=("${IMAGE_ROOT}:${IMAGE_ROOT}")
 fi
 
 declare -a CONTAINER_CMD=("apptainer" "exec" "--nv")
@@ -143,15 +165,37 @@ for bind in "${CONTAINER_BINDS[@]}"; do
 done
 CONTAINER_CMD+=("${CONTAINER_IMAGE}")
 
-"${CONTAINER_CMD[@]}" bash -c "
+"${CONTAINER_CMD[@]}" bash -c '
 set -euo pipefail
-export PATH=\"\$HOME/.local/bin:\$PATH\"
-source \"${REPO_DIR}/scripts/setup_env.sh\"
-cd \"${REPO_DIR}\"
-uv run evaluation/mmmu/run_inference.py \
-  --model-path \"${MODEL_PATH}\" \
-  --data-file \"${DATA_FILE}\" \
-  --image-root \"${IMAGE_ROOT}\" \
-  --output-file \"${OUTPUT_FILE}\" \
-  --limit \"${SAMPLE_LIMIT}\"
-"
+export PATH="$HOME/.local/bin:$PATH"
+source "$REPO_DIR/scripts/setup_env.sh"
+cd "$REPO_DIR"
+
+CMD=(uv run evaluation/mmmu/run_inference.py
+  --model-path "$MODEL_PATH"
+  --output-file "$OUTPUT_FILE"
+  --batch-size "$BATCH_SIZE"
+  --limit "$SAMPLE_LIMIT"
+)
+
+if [[ -n "${HF_DATASET_NAME:-}" ]]; then
+  CMD+=("--hf-dataset-name" "$HF_DATASET_NAME")
+fi
+if [[ -n "${DATA_FILE:-}" ]]; then
+  CMD+=("--data-file" "$DATA_FILE")
+fi
+if [[ -n "${IMAGE_ROOT:-}" ]]; then
+  CMD+=("--image-root" "$IMAGE_ROOT")
+fi
+if [[ "${SKIP_GENERATION}" == "1" ]]; then
+  CMD+=("--skip-generation")
+fi
+if [[ "${RESUME_RUN}" == "1" ]]; then
+  CMD+=("--resume")
+fi
+
+printf "Running inference command:"
+printf " %q" "${CMD[@]}"
+printf "\n"
+"${CMD[@]}"
+'
