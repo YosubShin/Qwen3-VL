@@ -36,12 +36,18 @@ fi
 
 log "Using container-provided CUDA toolchain; no custom setup required"
 
-# Prefer python3, fall back to python
-python_bin="$(command -v python3 || command -v python)"
+# Prefer python3, fall back to python; continue even if neither is available
+python_bin=""
+if command -v python3 >/dev/null 2>&1; then
+  python_bin="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+  python_bin="$(command -v python)"
+fi
 
-if [[ -z "${python_bin}" ]]; then
-  log "No python interpreter found" >&2
-  exit 1
+if [[ -n "${python_bin}" ]]; then
+  log "Found python interpreter at ${python_bin}"
+else
+  log "No system python found; relying on uv-managed interpreter"
 fi
 
 # Determine whether we need to rebuild or refresh the shared environment
