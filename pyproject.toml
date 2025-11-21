@@ -34,6 +34,12 @@ hpc = [
     "torchaudio==2.6.0",
     "flash-attn==2.7.4.post1",
 ]
+visualize = [
+    "streamlit>=1.32.0",
+    "plotly>=5.20.0",
+    "scikit-learn>=1.5.0",
+    "umap-learn>=0.5.5",
+]
 
 [tool.uv]
 package = false

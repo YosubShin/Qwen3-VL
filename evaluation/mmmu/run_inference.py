@@ -1,12 +1,15 @@
 import argparse
+import base64
+import csv
+import io
 import json
 import os
-import csv
 import sys
 from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
+from PIL import Image
 from tqdm import tqdm
 
 from qwen2_vl.model import Qwen2VLChat
@@ -46,8 +49,11 @@ def build_dump_image_fn(
     image_column: str,
     image_source_type: str,
     image_mime_type: str,
+    max_image_side: int,
 ):
     """Return a dump_image-compatible callable for dataset rows."""
+    resize_cache: Dict[str, str] = {}
+    max_side = max(0, max_image_side)
 
     def _ensure_list(value):
         if isinstance(value, str):
@@ -76,13 +82,73 @@ def build_dump_image_fn(
             return cleaned
         return f'data:{image_mime_type};base64,{cleaned}'
 
+    def _image_to_data_uri(image: Image.Image) -> str:
+        buffer = io.BytesIO()
+        image.save(buffer, format='PNG')
+        encoded = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        return f'data:image/png;base64,{encoded}'
+
+    def _resize_loaded_image(pil_image: Image.Image) -> str | None:
+        width, height = pil_image.size
+        if max_side <= 0 or max(width, height) <= max_side:
+            return None
+        resized = pil_image.convert('RGB')
+        resized.thumbnail((max_side, max_side), Image.LANCZOS)
+        return _image_to_data_uri(resized)
+
+    def _resize_path_if_needed(path_value: str) -> str:
+        cache_key = os.path.abspath(path_value)
+        cached = resize_cache.get(cache_key)
+        if cached:
+            return cached
+        try:
+            with Image.open(path_value) as img:
+                resized = _resize_loaded_image(img)
+        except Exception:
+            resized = None
+        result = resized or path_value
+        resize_cache[cache_key] = result
+        return result
+
+    def _resize_data_uri_if_needed(data_value: str) -> str:
+        if max_side <= 0:
+            return data_value
+        if ',' not in data_value:
+            return data_value
+        header, encoded = data_value.split(',', 1)
+        try:
+            decoded = base64.b64decode(encoded)
+        except Exception:
+            return data_value
+        try:
+            with Image.open(io.BytesIO(decoded)) as img:
+                resized = _resize_loaded_image(img)
+        except Exception:
+            return data_value
+        return resized or data_value
+
+    def _maybe_resize_image(value: str) -> str:
+        if max_side <= 0:
+            return value
+        if value.startswith('data:image'):
+            return _resize_data_uri_if_needed(value)
+        if value.startswith(('http://', 'https://')):
+            return value
+        if os.path.exists(value):
+            return _resize_path_if_needed(value)
+        return value
+
     def _dump_image(line):
         if image_column not in line:
             raise KeyError(f'Column "{image_column}" missing from sample.')
         raw_value = line[image_column]
         entries = _ensure_list(raw_value)
         resolver = _resolve_base64 if image_source_type == 'base64' else _resolve_path
-        resolved = [resolver(entry) for entry in entries if entry.strip()]
+        resolved = [
+            _maybe_resize_image(resolver(entry))
+            for entry in entries
+            if isinstance(entry, str) and entry.strip()
+        ]
 
         if not resolved:
             raise ValueError(f'No valid {image_column} values found for sample.')
@@ -147,6 +213,7 @@ def run_inference(args):
             image_column=args.image_column,
             image_source_type=args.image_source_type,
             image_mime_type=args.image_mime_type,
+            max_image_side=args.max_image_side,
         )
     )
 
@@ -233,6 +300,7 @@ def parse_args():
     parser.add_argument('--flush-every', type=int, default=5, help='Dump partial results after this many samples')
     parser.add_argument('--skip-generation', action='store_true', help='Only compute embeddings, skip answer generation')
     parser.add_argument('--resume', action='store_true', help='Resume from an existing JSONL output file')
+    parser.add_argument('--max-image-side', type=int, default=768, help='Resize images so the longest side is at most this size (use 0 to disable)')
     parser.add_argument('--temperature', type=float, default=0.01)
     parser.add_argument('--top-p', type=float, default=0.001)
     parser.add_argument('--top-k', type=int, default=1)
