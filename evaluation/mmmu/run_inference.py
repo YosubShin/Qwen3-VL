@@ -33,6 +33,10 @@ def _pil_to_resized_data_uri(image: Image.Image, max_side: int) -> str:
     """Resize PIL image if needed and return a PNG data URI."""
     if image is None:
         raise ValueError('Missing image value in dataset sample.')
+    if image.mode == 'P':
+        transparency = image.info.get('transparency')
+        if isinstance(transparency, (bytes, bytearray)):
+            image = image.convert('RGBA')
     rgb_image = image.convert('RGB')
     width, height = rgb_image.size
     if max_side > 0 and max(width, height) > max_side:
