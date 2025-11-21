@@ -112,6 +112,8 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             MODEL_CLS = Qwen2VLForConditionalGeneration
             self.processor = Qwen2VLProcessor.from_pretrained(model_path)
 
+        # Set padding side to left for batch inference, getting last non-pad token embedding
+        self.processor.tokenizer.padding_side = "left"
         print(self.processor.tokenizer)
         print("padding_side:", self.processor.tokenizer.padding_side)
         print("pad_token_id:", self.processor.tokenizer.pad_token_id)
