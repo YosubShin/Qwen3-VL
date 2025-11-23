@@ -8,6 +8,7 @@
 #     "pandas>=2.1",
 #     "scipy>=1.11",
 #     "scikit-learn>=1.4",
+#     "datasets>=3.4",
 # ]
 # ///
 
@@ -17,7 +18,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -47,11 +48,23 @@ def _read_jsonl(path: Path, limit: int | None) -> list[dict]:
     return records
 
 
-def _extract_embeddings(records: Iterable[dict]) -> tuple[list[str], list[np.ndarray]]:
+def _extract_embeddings(
+    records: Iterable[dict],
+    question_field: str,
+    answer_field: str,
+) -> tuple[list[str], list[np.ndarray], list[str]]:
     ids: list[str] = []
     vectors: list[np.ndarray] = []
+    keys: list[str] = []
     for idx, record in enumerate(records):
         question_id = record.get('question_id', idx)
+        annotation = record.get("annotation") or {}
+        question = annotation.get(question_field, record.get(question_field))
+        answer = annotation.get(answer_field, record.get(answer_field))
+        if question is None or answer is None:
+            continue
+        keys.append(f'{question}\u241f{answer}')
+
         embedding = (record.get('result') or {}).get('embedding')
         if embedding is None:
             continue
@@ -64,7 +77,7 @@ def _extract_embeddings(records: Iterable[dict]) -> tuple[list[str], list[np.nda
         arr = arr.squeeze()
         vectors.append(arr)
         ids.append(str(question_id))
-    return ids, vectors
+    return ids, vectors, keys
 
 
 @dataclass
@@ -72,16 +85,28 @@ class DatasetEmbeddings:
     name: str
     ids: np.ndarray
     embeddings: np.ndarray
+    keys: np.ndarray
 
 
-def load_dataset_embeddings(name: str, path: str, limit: int | None = None) -> DatasetEmbeddings:
+def load_dataset_embeddings(
+    name: str,
+    path: str,
+    question_field: str,
+    answer_field: str,
+    limit: int | None = None,
+) -> DatasetEmbeddings:
     jsonl_path = Path(path)
     records = _read_jsonl(jsonl_path, limit)
-    ids, vectors = _extract_embeddings(records)
+    ids, vectors, keys = _extract_embeddings(records, question_field, answer_field)
     if not vectors:
         raise ValueError(f'No embeddings found in {path}')
     matrix = np.vstack(vectors).astype(np.float32)
-    return DatasetEmbeddings(name=name, ids=np.asarray(ids), embeddings=matrix)
+    return DatasetEmbeddings(
+        name=name,
+        ids=np.asarray(ids),
+        embeddings=matrix,
+        keys=np.asarray(keys),
+    )
 
 
 def standardize_and_project(train_sets: list[DatasetEmbeddings], benchmark: DatasetEmbeddings, n_components: int):
@@ -113,6 +138,7 @@ def _sample_dataset(dataset: DatasetEmbeddings, target_size: int, seed: int) -> 
         name=dataset.name,
         ids=dataset.ids[indices],
         embeddings=dataset.embeddings[indices],
+        keys=dataset.keys[indices],
     )
 
 
@@ -129,6 +155,48 @@ def balance_dataset_sizes(primary: DatasetEmbeddings, secondary: DatasetEmbeddin
         'secondary': {'label': secondary.name, 'original_size': secondary_size, 'balanced_size': len(balanced_secondary.embeddings)},
     }
     return balanced_primary, balanced_secondary, info
+
+
+def load_hf_subset_keys(
+    dataset_name: str,
+    dataset_config: str | None,
+    split: str,
+    question_field: str,
+    answer_field: str,
+    limit: int | None = None,
+) -> set[str]:
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError('Install the "datasets" package to use HF dataset filtering.') from exc
+    load_kwargs = {}
+    if dataset_config:
+        load_kwargs['name'] = dataset_config
+    dataset = load_dataset(dataset_name, split=split, **load_kwargs)
+    if limit:
+        dataset = dataset.select(range(min(limit, len(dataset))))
+    keys: set[str] = set()
+    for sample in dataset:
+        question = sample.get(question_field)
+        answer = sample.get(answer_field)
+        if question is None or answer is None:
+            continue
+        keys.add(f'{question}\u241f{answer}')
+    if not keys:
+        raise ValueError(f'HF dataset {dataset_name} produced zero question/answer pairs.')
+    return keys
+
+
+def filter_dataset_to_keys(dataset: DatasetEmbeddings, key_set: set[str]) -> DatasetEmbeddings:
+    mask = np.array([key in key_set for key in dataset.keys])
+    if not mask.any():
+        raise ValueError(f'No overlap between {dataset.name} embeddings and provided HF subset.')
+    return DatasetEmbeddings(
+        name=dataset.name,
+        ids=dataset.ids[mask],
+        embeddings=dataset.embeddings[mask],
+        keys=dataset.keys[mask],
+    )
 
 
 def experiment_knn_proximity(
@@ -382,9 +450,63 @@ def build_accuracy_frame(path: str | None, base_column: str, primary_column: str
 
 
 def run_all_experiments(args):
-    primary = load_dataset_embeddings(args.primary_label, args.primary_jsonl, limit=args.limit)
-    secondary = load_dataset_embeddings(args.secondary_label, args.secondary_jsonl, limit=args.limit)
-    benchmark = load_dataset_embeddings(args.benchmark_label, args.benchmark_jsonl, limit=args.limit)
+    primary = load_dataset_embeddings(
+        args.primary_label,
+        args.primary_jsonl,
+        question_field=args.primary_question_field,
+        answer_field=args.primary_answer_field,
+        limit=args.limit,
+    )
+    secondary = load_dataset_embeddings(
+        args.secondary_label,
+        args.secondary_jsonl,
+        question_field=args.secondary_question_field,
+        answer_field=args.secondary_answer_field,
+        limit=args.limit,
+    )
+    benchmark = load_dataset_embeddings(
+        args.benchmark_label,
+        args.benchmark_jsonl,
+        question_field=args.benchmark_question_field,
+        answer_field=args.benchmark_answer_field,
+        limit=args.limit,
+    )
+
+    hf_filter_info: dict[str, dict] = {}
+    if args.primary_hf_dataset:
+        keys = load_hf_subset_keys(
+            dataset_name=args.primary_hf_dataset,
+            dataset_config=args.primary_hf_config,
+            split=args.primary_hf_split,
+            question_field=args.primary_hf_question_field or args.primary_question_field,
+            answer_field=args.primary_hf_answer_field or args.primary_answer_field,
+            limit=args.hf_limit,
+        )
+        before = len(primary.embeddings)
+        primary = filter_dataset_to_keys(primary, keys)
+        hf_filter_info['primary'] = {
+            'label': primary.name,
+            'hf_dataset': args.primary_hf_dataset,
+            'before': before,
+            'after': len(primary.embeddings),
+        }
+    if args.secondary_hf_dataset:
+        keys = load_hf_subset_keys(
+            dataset_name=args.secondary_hf_dataset,
+            dataset_config=args.secondary_hf_config,
+            split=args.secondary_hf_split,
+            question_field=args.secondary_hf_question_field or args.secondary_question_field,
+            answer_field=args.secondary_hf_answer_field or args.secondary_answer_field,
+            limit=args.hf_limit,
+        )
+        before = len(secondary.embeddings)
+        secondary = filter_dataset_to_keys(secondary, keys)
+        hf_filter_info['secondary'] = {
+            'label': secondary.name,
+            'hf_dataset': args.secondary_hf_dataset,
+            'before': before,
+            'after': len(secondary.embeddings),
+        }
 
     primary, secondary, balance_info = balance_dataset_sizes(primary, secondary, seed=args.balance_seed)
     projected = standardize_and_project([primary, secondary], benchmark, n_components=args.pca_components)
@@ -393,6 +515,8 @@ def run_all_experiments(args):
     benchmark_pca = projected[benchmark.name]
 
     summary = {'balanced_dataset_sizes': balance_info}
+    if hf_filter_info:
+        summary['hf_filters'] = hf_filter_info
     summary['experiment_knn'] = experiment_knn_proximity(
         benchmark_pca,
         primary_pca,
@@ -597,12 +721,29 @@ def parse_args():
     parser.add_argument('--primary-jsonl', required=True, help='Path to the primary training dataset JSONL with embeddings.')
     parser.add_argument('--primary-label', type=str, default='Primary', help='Display label for the primary dataset.')
     parser.add_argument('--primary-accuracy-column', type=str, default='acc_primary', help='Accuracy column for the primary fine-tuned model.')
+    parser.add_argument('--primary-question-field', type=str, default='question')
+    parser.add_argument('--primary-answer-field', type=str, default='answer')
+    parser.add_argument('--primary-hf-dataset', type=str, default=None, help='Optional HF dataset ID describing the primary subset.')
+    parser.add_argument('--primary-hf-config', type=str, default=None)
+    parser.add_argument('--primary-hf-split', type=str, default='train')
+    parser.add_argument('--primary-hf-question-field', type=str, default="problem")
+    parser.add_argument('--primary-hf-answer-field', type=str, default="solution")
     parser.add_argument('--secondary-jsonl', required=True, help='Path to the secondary training dataset JSONL with embeddings.')
     parser.add_argument('--secondary-label', type=str, default='Secondary', help='Display label for the secondary dataset.')
     parser.add_argument('--secondary-accuracy-column', type=str, default=None, help='Accuracy column for the secondary fine-tuned model (optional).')
+    parser.add_argument('--secondary-question-field', type=str, default='question')
+    parser.add_argument('--secondary-answer-field', type=str, default='answer')
+    parser.add_argument('--secondary-hf-dataset', type=str, default=None, help='Optional HF dataset ID describing the secondary subset.')
+    parser.add_argument('--secondary-hf-config', type=str, default=None)
+    parser.add_argument('--secondary-hf-split', type=str, default='train')
+    parser.add_argument('--secondary-hf-question-field', type=str, default="problem")
+    parser.add_argument('--secondary-hf-answer-field', type=str, default="solution")
     parser.add_argument('--benchmark-jsonl', required=True, help='Path to the benchmark dataset JSONL with embeddings.')
     parser.add_argument('--benchmark-label', type=str, default='Benchmark', help='Display label for the benchmark dataset.')
+    parser.add_argument('--benchmark-question-field', type=str, default='question')
+    parser.add_argument('--benchmark-answer-field', type=str, default='answer')
     parser.add_argument('--base-accuracy-column', type=str, default='acc_base', help='Accuracy column representing the base model.')
+    parser.add_argument('--hf-limit', type=int, default=None, help='Optional limit applied when loading HF datasets for filtering.')
     parser.add_argument('--limit', type=int, default=None, help='Load at most this many rows per dataset.')
     parser.add_argument('--pca-components', type=int, default=50)
     parser.add_argument('--balance-seed', type=int, default=0, help='Random seed for balancing dataset sizes.')
