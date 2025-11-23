@@ -111,15 +111,25 @@ def load_dataset_embeddings(
     )
 
 
-def standardize_and_project(train_sets: list[DatasetEmbeddings], benchmark: DatasetEmbeddings, n_components: int):
+def standardize_and_project(
+    train_sets: list[DatasetEmbeddings],
+    benchmark: DatasetEmbeddings,
+    n_components: int,
+    use_pca: bool,
+):
     train_matrix = np.vstack([ds.embeddings for ds in train_sets])
     scaler = StandardScaler()
     train_scaled = scaler.fit_transform(train_matrix)
     benchmark_scaled = scaler.transform(benchmark.embeddings)
 
-    pca = PCA(n_components=n_components, random_state=0)
-    projected_train = pca.fit_transform(train_scaled)
-    projected_benchmark = pca.transform(benchmark_scaled)
+    if use_pca:
+        components = min(n_components, train_scaled.shape[1])
+        pca = PCA(n_components=components, random_state=0)
+        projected_train = pca.fit_transform(train_scaled)
+        projected_benchmark = pca.transform(benchmark_scaled)
+    else:
+        projected_train = train_scaled
+        projected_benchmark = benchmark_scaled
 
     outputs = {}
     start = 0
@@ -511,7 +521,12 @@ def run_all_experiments(args):
         }
 
     primary, secondary, balance_info = balance_dataset_sizes(primary, secondary, seed=args.balance_seed)
-    projected = standardize_and_project([primary, secondary], benchmark, n_components=args.pca_components)
+    projected = standardize_and_project(
+        [primary, secondary],
+        benchmark,
+        n_components=args.pca_components,
+        use_pca=not args.skip_pca,
+    )
     primary_pca = projected[primary.name]
     secondary_pca = projected[secondary.name]
     benchmark_pca = projected[benchmark.name]
@@ -751,6 +766,7 @@ def parse_args():
     parser.add_argument('--hf-limit', type=int, default=None, help='Optional limit applied when loading HF datasets for filtering.')
     parser.add_argument('--limit', type=int, default=None, help='Load at most this many rows per dataset.')
     parser.add_argument('--pca-components', type=int, default=50)
+    parser.add_argument('--skip-pca', action='store_true', help='Use standardized embeddings directly without PCA.')
     parser.add_argument('--balance-seed', type=int, default=0, help='Random seed for balancing dataset sizes.')
     parser.add_argument('--accuracy-csv', type=str, default=None, help='Optional CSV with per-question accuracy columns.')
     parser.add_argument('--coverage-k', type=int, default=32)
