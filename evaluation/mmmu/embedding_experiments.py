@@ -18,6 +18,8 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
+import sys
 from typing import Any, Iterable
 
 import matplotlib.pyplot as plt
@@ -708,6 +710,9 @@ def render_outputs(summary: dict, output_dir: Path | None):
     summary_path = output_dir / 'summary.json'
     with summary_path.open('w') as handle:
         json.dump(summary, handle, indent=2)
+    command = summary.get('command')
+    if command:
+        (output_dir / 'command.txt').write_text(command + '\n')
     plot_knn_histogram(summary.get('experiment_knn', {}), output_dir)
     plot_coverage_bins(summary.get('experiment_density', {}), output_dir)
     plot_cluster_distribution(summary.get('experiment_clusters', {}), output_dir)
@@ -760,6 +765,7 @@ def parse_args():
 def main():
     args = parse_args()
     summary = run_all_experiments(args)
+    summary['command'] = ' '.join(shlex.quote(arg) for arg in sys.argv)
     output_dir = Path(args.output_dir) if args.output_dir else None
     render_outputs(summary, output_dir)
 
