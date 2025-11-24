@@ -9,6 +9,7 @@
 #     "scipy>=1.11",
 #     "scikit-learn>=1.4",
 #     "datasets>=3.4",
+#     "openpyxl>=3.1.5",
 # ]
 # ///
 
@@ -257,9 +258,9 @@ def experiment_density_coverage(
     primary_label: str,
     secondary_label: str,
     accuracy_df: pd.DataFrame | None,
+    base_accuracy_column: str | None,
+    primary_accuracy_column: str | None,
     secondary_accuracy_column: str | None,
-    base_accuracy_column: str,
-    primary_accuracy_column: str,
     k_neighbors: int = 32,
     buckets: int = 5,
 ):
@@ -279,22 +280,29 @@ def experiment_density_coverage(
         result['coverage_bins'] = []
         return result
 
-    if 'question_id' not in accuracy_df.columns:
-        raise ValueError('accuracy dataframe must include question_id column.')
     accuracy_df = accuracy_df.copy()
-    accuracy_df = accuracy_df.copy()
-    accuracy_df['primary_frac'] = primary_frac[: len(accuracy_df)]
+    if len(accuracy_df) != len(primary_frac):
+        raise ValueError('Accuracy rows must align with benchmark embeddings.')
+    accuracy_df['primary_frac'] = primary_frac
 
-    quantiles = np.linspace(0, 1, buckets + 1)
-    bin_edges = np.quantile(accuracy_df['primary_frac'], quantiles)
-    accuracy_df['bucket'] = pd.cut(accuracy_df['primary_frac'], bins=np.unique(bin_edges), include_lowest=True, labels=False)
-
-    secondary_acc_col = None
-    if secondary_accuracy_column:
-        if secondary_accuracy_column in accuracy_df.columns:
-            secondary_acc_col = secondary_accuracy_column
+    unique_values = accuracy_df['primary_frac'].nunique(dropna=True)
+    if unique_values <= 1:
+        accuracy_df['bucket'] = 0
+    else:
+        quantiles = np.linspace(0, 1, buckets + 1)
+        bin_edges = np.quantile(accuracy_df['primary_frac'], quantiles)
+        unique_edges = np.unique(bin_edges)
+        if len(unique_edges) < 2:
+            accuracy_df['bucket'] = 0
         else:
-            raise ValueError(f'Secondary accuracy column "{secondary_accuracy_column}" not present in accuracy CSV.')
+            accuracy_df['bucket'] = pd.cut(
+                accuracy_df['primary_frac'],
+                bins=unique_edges,
+                include_lowest=True,
+                labels=False,
+            )
+
+    secondary_acc_col = secondary_accuracy_column if secondary_accuracy_column and secondary_accuracy_column in accuracy_df.columns else None
 
     coverage_bins = []
     for bucket_idx in range(accuracy_df['bucket'].nunique()):
@@ -307,15 +315,15 @@ def experiment_density_coverage(
             'primary_frac_mean': float(bucket_df['primary_frac'].mean()),
         }
         for col in (base_accuracy_column, primary_accuracy_column):
-            if col in bucket_df.columns:
+            if col and col in bucket_df.columns:
                 bin_entry[col] = float(bucket_df[col].mean())
         if secondary_acc_col:
             bin_entry[secondary_acc_col] = float(bucket_df[secondary_acc_col].mean())
-        if base_accuracy_column in bucket_df.columns and primary_accuracy_column in bucket_df.columns:
+        if base_accuracy_column and primary_accuracy_column and base_accuracy_column in bucket_df.columns and primary_accuracy_column in bucket_df.columns:
             bin_entry[f'delta_{primary_label}'] = float(
                 (bucket_df[primary_accuracy_column] - bucket_df[base_accuracy_column]).mean()
             )
-        if secondary_acc_col and base_accuracy_column in bucket_df.columns:
+        if secondary_acc_col and base_accuracy_column and base_accuracy_column in bucket_df.columns:
             bin_entry[f'delta_{secondary_label}'] = float(
                 (bucket_df[secondary_acc_col] - bucket_df[base_accuracy_column]).mean()
             )
@@ -325,8 +333,8 @@ def experiment_density_coverage(
     result['secondary_accuracy_column'] = secondary_acc_col
     result['base_accuracy_column'] = base_accuracy_column
     result['primary_accuracy_column'] = primary_accuracy_column
-    result['primary_delta_key'] = f'delta_{primary_label}'
-    if secondary_acc_col:
+    result['primary_delta_key'] = f'delta_{primary_label}' if (base_accuracy_column and primary_accuracy_column) else None
+    if secondary_acc_col and base_accuracy_column:
         result['secondary_delta_key'] = f'delta_{secondary_label}'
     return result
 
@@ -450,15 +458,38 @@ def retrieve_neighbors(
     return qualitative
 
 
-def build_accuracy_frame(path: str | None, base_column: str, primary_column: str) -> pd.DataFrame | None:
-    if not path:
+def load_accuracy_hits(
+    base_path: str | None,
+    primary_path: str | None,
+    secondary_path: str | None,
+    primary_label: str,
+    secondary_label: str,
+    expected_length: int | None = None,
+) -> pd.DataFrame | None:
+    columns = {}
+
+    def _load_hits(path: str, desc: str) -> np.ndarray:
+        excel_path = Path(path)
+        df = pd.read_excel(excel_path)
+        if 'hit' not in df.columns:
+            raise ValueError(f'Excel file {path} missing required "hit" column for {desc}.')
+        hits = df['hit'].astype(float).to_numpy()
+        if expected_length is not None and len(hits) != expected_length:
+            raise ValueError(
+                f'Accuracy file {path} has {len(hits)} rows but benchmark has {expected_length} embeddings.'
+            )
+        return hits
+
+    if base_path:
+        columns['acc_base'] = _load_hits(base_path, 'base accuracy')
+    if primary_path:
+        columns[f'acc_{primary_label}'] = _load_hits(primary_path, f'{primary_label} accuracy')
+    if secondary_path:
+        columns[f'acc_{secondary_label}'] = _load_hits(secondary_path, f'{secondary_label} accuracy')
+
+    if not columns:
         return None
-    csv_path = Path(path)
-    df = pd.read_csv(csv_path)
-    required = {'question_id', base_column, primary_column}
-    if not required.issubset(df.columns):
-        raise ValueError(f'Accuracy CSV must include columns: {required}')
-    return df
+    return pd.DataFrame(columns)
 
 
 def run_all_experiments(args):
@@ -541,7 +572,17 @@ def run_all_experiments(args):
         secondary_pca,
         secondary.name,
     )
-    accuracy_df = build_accuracy_frame(args.accuracy_csv, args.base_accuracy_column, args.primary_accuracy_column)
+    accuracy_df = load_accuracy_hits(
+        base_path=args.base_accuracy_xlsx,
+        primary_path=args.primary_accuracy_xlsx,
+        secondary_path=args.secondary_accuracy_xlsx,
+        primary_label=primary.name,
+        secondary_label=secondary.name,
+        expected_length=len(benchmark.embeddings),
+    )
+    base_col = 'acc_base' if args.base_accuracy_xlsx else None
+    primary_col = f'acc_{primary.name}' if args.primary_accuracy_xlsx else None
+    secondary_col = f'acc_{secondary.name}' if args.secondary_accuracy_xlsx else None
     summary['experiment_density'] = experiment_density_coverage(
         benchmark_pca,
         primary_pca,
@@ -549,9 +590,9 @@ def run_all_experiments(args):
         primary_label=primary.name,
         secondary_label=secondary.name,
         accuracy_df=accuracy_df,
-        secondary_accuracy_column=args.secondary_accuracy_column,
-        base_accuracy_column=args.base_accuracy_column,
-        primary_accuracy_column=args.primary_accuracy_column,
+        secondary_accuracy_column=secondary_col,
+        base_accuracy_column=base_col,
+        primary_accuracy_column=primary_col,
         k_neighbors=args.coverage_k,
         buckets=args.coverage_bins,
     )
@@ -622,7 +663,10 @@ def plot_coverage_bins(coverage: dict, output_dir: Path):
     secondary_label = coverage.get('secondary_label', 'Secondary')
     primary_delta_key = coverage.get('primary_delta_key')
     secondary_delta_key = coverage.get('secondary_delta_key')
-    buckets = [int(entry['bucket']) for entry in bins]
+    base_col = coverage.get('base_accuracy_column')
+    primary_acc_col = coverage.get('primary_accuracy_column')
+    secondary_acc_col = coverage.get('secondary_accuracy_column')
+    bucket_positions = [entry['primary_frac_mean'] for entry in bins]
     delta_primary = np.array(
         [entry.get(primary_delta_key) if primary_delta_key and entry.get(primary_delta_key) is not None else np.nan for entry in bins],
         dtype=float,
@@ -633,17 +677,50 @@ def plot_coverage_bins(coverage: dict, output_dir: Path):
     )
     plt.figure(figsize=(6, 4))
     if np.isfinite(delta_primary).any():
-        plt.plot(buckets, delta_primary, marker='o', label=f'Δ {primary_label}')
+        plt.plot(bucket_positions, delta_primary, marker='o', label=f'Δ {primary_label}')
     if np.isfinite(delta_secondary).any():
-        plt.plot(buckets, delta_secondary, marker='s', label=f'Δ {secondary_label}')
+        plt.plot(bucket_positions, delta_secondary, marker='s', label=f'Δ {secondary_label}')
     plt.title(f'Fine-tune improvement vs {primary_label} coverage')
-    plt.xlabel(f'{primary_label} coverage bucket (low → high)')
+    plt.xlabel(f'{primary_label} coverage (primary fraction mean)')
     plt.ylabel('Accuracy improvement vs base')
-    plt.xticks(buckets)
+    plt.xticks(bucket_positions)
     plt.legend()
     plt.tight_layout()
     plt.savefig(output_dir / 'coverage_improvement.png', dpi=200)
     plt.close()
+
+    # Accuracy plot
+    base_vals = np.array(
+        [entry.get(base_col) if base_col and entry.get(base_col) is not None else np.nan for entry in bins],
+        dtype=float,
+    ) if base_col else None
+    primary_vals = np.array(
+        [entry.get(primary_acc_col) if primary_acc_col and entry.get(primary_acc_col) is not None else np.nan for entry in bins],
+        dtype=float,
+    ) if primary_acc_col else None
+    secondary_vals = np.array(
+        [entry.get(secondary_acc_col) if secondary_acc_col and entry.get(secondary_acc_col) is not None else np.nan for entry in bins],
+        dtype=float,
+    ) if secondary_acc_col else None
+
+    if (base_vals is not None and np.isfinite(base_vals).any()) or \
+       (primary_vals is not None and np.isfinite(primary_vals).any()) or \
+       (secondary_vals is not None and np.isfinite(secondary_vals).any()):
+        plt.figure(figsize=(6, 4))
+        if base_vals is not None:
+            plt.plot(bucket_positions, base_vals, marker='o', label='Base')
+        if primary_vals is not None:
+            plt.plot(bucket_positions, primary_vals, marker='o', label=primary_label)
+        if secondary_vals is not None:
+            plt.plot(bucket_positions, secondary_vals, marker='s', label=secondary_label)
+        plt.title(f'Absolute accuracy vs {primary_label} coverage')
+        plt.xlabel(f'{primary_label} coverage (primary fraction mean)')
+        plt.ylabel('Accuracy')
+        plt.xticks(bucket_positions)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_dir / 'coverage_accuracy.png', dpi=200)
+        plt.close()
 
 
 def plot_cluster_distribution(cluster_stats: dict, output_dir: Path):
@@ -740,7 +817,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Compare benchmark embeddings to training datasets.')
     parser.add_argument('--primary-jsonl', required=True, help='Path to the primary training dataset JSONL with embeddings.')
     parser.add_argument('--primary-label', type=str, default='Primary', help='Display label for the primary dataset.')
-    parser.add_argument('--primary-accuracy-column', type=str, default='acc_primary', help='Accuracy column for the primary fine-tuned model.')
     parser.add_argument('--primary-question-field', type=str, default='question')
     parser.add_argument('--primary-answer-field', type=str, default='answer')
     parser.add_argument('--primary-hf-dataset', type=str, default=None, help='Optional HF dataset ID describing the primary subset.')
@@ -750,7 +826,6 @@ def parse_args():
     parser.add_argument('--primary-hf-answer-field', type=str, default="solution")
     parser.add_argument('--secondary-jsonl', required=True, help='Path to the secondary training dataset JSONL with embeddings.')
     parser.add_argument('--secondary-label', type=str, default='Secondary', help='Display label for the secondary dataset.')
-    parser.add_argument('--secondary-accuracy-column', type=str, default=None, help='Accuracy column for the secondary fine-tuned model (optional).')
     parser.add_argument('--secondary-question-field', type=str, default='question')
     parser.add_argument('--secondary-answer-field', type=str, default='answer')
     parser.add_argument('--secondary-hf-dataset', type=str, default=None, help='Optional HF dataset ID describing the secondary subset.')
@@ -762,13 +837,14 @@ def parse_args():
     parser.add_argument('--benchmark-label', type=str, default='Benchmark', help='Display label for the benchmark dataset.')
     parser.add_argument('--benchmark-question-field', type=str, default='question')
     parser.add_argument('--benchmark-answer-field', type=str, default='answer')
-    parser.add_argument('--base-accuracy-column', type=str, default='acc_base', help='Accuracy column representing the base model.')
+    parser.add_argument('--base-accuracy-xlsx', type=str, default=None, help='Excel file with base-model accuracies (hit column).')
+    parser.add_argument('--primary-accuracy-xlsx', type=str, default=None, help='Excel file with primary fine-tuned accuracies (hit column).')
+    parser.add_argument('--secondary-accuracy-xlsx', type=str, default=None, help='Excel file with secondary fine-tuned accuracies (hit column).')
     parser.add_argument('--hf-limit', type=int, default=None, help='Optional limit applied when loading HF datasets for filtering.')
     parser.add_argument('--limit', type=int, default=None, help='Load at most this many rows per dataset.')
     parser.add_argument('--pca-components', type=int, default=50)
     parser.add_argument('--skip-pca', action='store_true', help='Use standardized embeddings directly without PCA.')
     parser.add_argument('--balance-seed', type=int, default=0, help='Random seed for balancing dataset sizes.')
-    parser.add_argument('--accuracy-csv', type=str, default=None, help='Optional CSV with per-question accuracy columns.')
     parser.add_argument('--coverage-k', type=int, default=32)
     parser.add_argument('--coverage-bins', type=int, default=5)
     parser.add_argument('--cluster-k', type=int, default=20)

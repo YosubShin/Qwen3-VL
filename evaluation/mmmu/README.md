@@ -60,23 +60,23 @@ When you have inference JSONL files (with embeddings) for multiple training data
 uv run -m evaluation.mmmu.embedding_experiments \
   --primary-jsonl /path/to/train_primary.jsonl \
   --primary-label WaltonSubset \
-  --primary-accuracy-column acc_walton \
+  --primary-accuracy-xlsx /path/to/walton_subset_accuracy.xlsx \
   --primary-hf-dataset your_org/primary_subset \
   --primary-hf-question-field question \
   --primary-hf-answer-field answer \
   --secondary-jsonl /path/to/train_secondary.jsonl \
   --secondary-label TrainB \
-  --secondary-accuracy-column acc_train_b \
+  --secondary-accuracy-xlsx /path/to/trainb_accuracy.xlsx \
   --secondary-hf-dataset your_org/secondary_subset \
   --benchmark-jsonl /path/to/benchmark.jsonl \
   --benchmark-label LiveXivTQA \
-  --accuracy-csv /path/to/benchmark_accuracy.csv \
+  --base-accuracy-xlsx /path/to/base_model_accuracy.xlsx \
   --output-dir results/embedding_analysis
 ```
 
-This executes Experiments 1–4 & 6 from the proposal: k-NN proximity, density/coverage buckets (if accuracies are supplied), cluster-distribution JS distances, Fréchet distances, and qualitative neighbor retrievals. The script is fully label-agnostic, so you can plug in any primary/secondary training splits and any benchmark. Before PCA, it downsamples the larger train dataset so both sets contain the same number of embeddings (seed controlled by `--balance-seed`), ensuring the comparison isn’t biased by size. It standardizes + PCA-reduces embeddings once by default (pass `--skip-pca` if you prefer to analyze standardized but raw-dimensional embeddings), prints the JSON summary to stdout, and also saves it (plus PNG plots) under `--output-dir`. Omit `--accuracy-csv` when per-question accuracy is unavailable; all other experiments still run.
+This executes Experiments 1–4 & 6 from the proposal: k-NN proximity, density/coverage buckets (if accuracies are supplied), cluster-distribution JS distances, Fréchet distances, and qualitative neighbor retrievals. The script is fully label-agnostic, so you can plug in any primary/secondary training splits and any benchmark. Before PCA, it downsamples the larger train dataset so both sets contain the same number of embeddings (seed controlled by `--balance-seed`), ensuring the comparison isn’t biased by size. It standardizes + PCA-reduces embeddings once by default (pass `--skip-pca` if you prefer to analyze standardized but raw-dimensional embeddings), prints the JSON summary to stdout, and also saves it (plus PNG plots) under `--output-dir`. Omit the `--*-accuracy-xlsx` flags when per-question accuracy is unavailable; all other experiments still run.
 
-Use `--primary-accuracy-column`, `--secondary-accuracy-column`, and `--base-accuracy-column` to match whatever column names live in your accuracy CSV. You can also customize which fields in the JSONL/HF datasets contain the question/answer text via `--*-question-field` / `--*-answer-field`. When `--*-hf-dataset` arguments are supplied, the script will load those Hugging Face datasets, extract their question/answer pairs (respecting `--hf-limit`), and filter the JSONL embeddings down to that exact subset before continuing.
+Use `--*-accuracy-xlsx` to point to Excel files with a `hit` column (aligned with the benchmark JSONL rows) for the base, primary, and secondary accuracies. You can also customize which fields in the JSONL/HF datasets contain the question/answer text via `--*-question-field` / `--*-answer-field`. When `--*-hf-dataset` arguments are supplied, the script will load those Hugging Face datasets, extract their question/answer pairs (respecting `--hf-limit`), and filter the JSONL embeddings down to that exact subset before continuing.
 
 ### 1. Inference Mode (`infer`)
 
