@@ -224,8 +224,20 @@ def experiment_knn_proximity(
     dist_primary = nn_primary.kneighbors(benchmark, return_distance=True)[0][:, 0]
     dist_secondary = nn_secondary.kneighbors(benchmark, return_distance=True)[0][:, 0]
 
+    k_multi = 10
+    k_primary = min(k_multi, len(primary))
+    k_secondary = min(k_multi, len(secondary))
+    nn_primary_multi = NearestNeighbors(n_neighbors=k_primary, metric='euclidean').fit(primary)
+    nn_secondary_multi = NearestNeighbors(n_neighbors=k_secondary, metric='euclidean').fit(secondary)
+    dist_primary_multi = nn_primary_multi.kneighbors(benchmark, return_distance=True)[0][:, :k_primary]
+    dist_secondary_multi = nn_secondary_multi.kneighbors(benchmark, return_distance=True)[0][:, :k_secondary]
+    mean_dist_primary_multi = dist_primary_multi.mean(axis=1)
+    mean_dist_secondary_multi = dist_secondary_multi.mean(axis=1)
+
     closer_primary = float(np.mean(dist_primary < dist_secondary))
     diff = dist_primary - dist_secondary
+    closer_primary_multi = float(np.mean(mean_dist_primary_multi < mean_dist_secondary_multi))
+    diff_multi = mean_dist_primary_multi - mean_dist_secondary_multi
     statistics = {
         'primary_label': primary_label,
         'secondary_label': secondary_label,
@@ -234,6 +246,11 @@ def experiment_knn_proximity(
         'median_distance_diff': float(np.median(diff)),
         'std_distance_diff': float(np.std(diff)),
         'distance_diff_label': f'{primary_label} minus {secondary_label}',
+        'fraction_benchmark_closer_to_primary_k10': closer_primary_multi,
+        'mean_distance_diff_k10': float(np.mean(diff_multi)),
+        'median_distance_diff_k10': float(np.median(diff_multi)),
+        'std_distance_diff_k10': float(np.std(diff_multi)),
+        'distance_diff_label_k10': f'{primary_label} minus {secondary_label} (mean of k=10)',
     }
     try:
         wilcoxon_stat = wilcoxon(dist_secondary, dist_primary, zero_method='wilcox', correction=True)
@@ -247,6 +264,11 @@ def experiment_knn_proximity(
     statistics['diff_histogram'] = {
         'bins': hist_bins.tolist(),
         'counts': hist_counts.tolist(),
+    }
+    hist_counts_multi, hist_bins_multi = np.histogram(diff_multi, bins=50)
+    statistics['diff_histogram_k10'] = {
+        'bins': hist_bins_multi.tolist(),
+        'counts': hist_counts_multi.tolist(),
     }
     return statistics
 
@@ -630,29 +652,55 @@ def run_all_experiments(args):
 
 
 def plot_knn_histogram(statistics: dict, output_dir: Path):
-    histogram = statistics.get('diff_histogram')
-    if not histogram:
-        return
+    def _plot(
+        histogram: dict | None,
+        title: str,
+        xlabel: str,
+        outfile: str,
+        closer_pct: float | None,
+        closer_label: str,
+    ):
+        if not histogram:
+            return
+        bins = np.asarray(histogram.get('bins'))
+        counts = np.asarray(histogram.get('counts'))
+        if len(bins) < 2 or len(counts) == 0:
+            return
+        centers = 0.5 * (bins[:-1] + bins[1:])
+        widths = np.diff(bins)
+        plt.figure(figsize=(6, 4))
+        plt.bar(centers, counts, width=widths, align='center', edgecolor='black')
+        plt.axvline(0, color='red', linestyle='--', label='Equal distance')
+        plt.title(title)
+        plt.xlabel(xlabel)
+        plt.ylabel('Count')
+        if closer_pct is not None:
+            plt.legend(title=f'Closer to {closer_label}: {closer_pct:.2%}')
+        plt.tight_layout()
+        plt.savefig(output_dir / outfile, dpi=200)
+        plt.close()
+
     primary_label = statistics.get('primary_label', 'primary')
     secondary_label = statistics.get('secondary_label', 'secondary')
-    bins = np.asarray(histogram.get('bins'))
-    counts = np.asarray(histogram.get('counts'))
-    if len(bins) < 2 or len(counts) == 0:
-        return
-    centers = 0.5 * (bins[:-1] + bins[1:])
-    widths = np.diff(bins)
-    plt.figure(figsize=(6, 4))
-    plt.bar(centers, counts, width=widths, align='center', edgecolor='black')
-    plt.axvline(0, color='red', linestyle='--', label='Equal distance')
-    plt.title(f'Distribution of dist({primary_label}) - dist({secondary_label})')
-    plt.xlabel(f'Nearest {primary_label} distance minus nearest {secondary_label} distance')
-    plt.ylabel('Count')
-    closer_pct = statistics.get('fraction_benchmark_closer_to_primary')
-    if closer_pct is not None:
-        plt.legend(title=f'Closer to {primary_label}: {closer_pct:.2%}')
-    plt.tight_layout()
-    plt.savefig(output_dir / 'knn_distance_hist.png', dpi=200)
-    plt.close()
+    base_title = f'Distribution of dist({primary_label}) - dist({secondary_label})'
+    base_xlabel = f'Nearest {primary_label} distance minus nearest {secondary_label} distance'
+    _plot(
+        statistics.get('diff_histogram'),
+        base_title,
+        base_xlabel,
+        'knn_distance_hist.png',
+        statistics.get('fraction_benchmark_closer_to_primary'),
+        primary_label,
+    )
+    k_multi = 10
+    _plot(
+        statistics.get('diff_histogram_k10'),
+        f'Mean k={k_multi} dist({primary_label}) - dist({secondary_label})',
+        f'Mean k={k_multi} {primary_label} distance minus mean k={k_multi} {secondary_label} distance',
+        f'knn_distance_hist_k{k_multi}.png',
+        statistics.get('fraction_benchmark_closer_to_primary_k10'),
+        primary_label,
+    )
 
 
 def plot_coverage_bins(coverage: dict, output_dir: Path):
